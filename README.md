@@ -19,6 +19,10 @@ Tareas siguientes <br>
 Arreglar cálculo analítico del gradiente
 U_b, resolver problema con b siendo complejo
 
+> v1.3
+
+- Refactorizado para desacoplar ansatzs de funciones
+
 Cambios futuros
 ===============
 - Refactorización para mejorar mantenimiento del código

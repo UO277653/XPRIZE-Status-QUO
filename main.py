@@ -39,6 +39,14 @@ def ansatz(params):
     v = v / np.linalg.norm(v)
     return v
 
+def circuit_amplitude(params, num_qubits):
+    v = ansatz(params)
+    qml.AmplitudeEmbedding(v, wires=range(1,
+                                          num_qubits + 1),
+                           normalize=False)
+    qml.AmplitudeEmbedding(v, wires=range(
+        num_qubits + 1, 2 * num_qubits + 1),
+                           normalize=False)
 
 def variational_block(weights,n_qubits):
     """
@@ -67,10 +75,13 @@ def variational_block(weights,n_qubits):
     for idx, param in enumerate(extra_params):
         qml.RY(param, wires=idx % n_qubits)  # Distribuye los parámetros sobrantes entre los qubits
 
+def circuit_variational(params, num_qubits):
+    variational_block(params,
+                      num_qubits)  # Usa la función variational_block original
 
 ansatz_library = {
-    "amplitude": ansatz,
-    "variational_block": variational_block,
+    "amplitude": {"ansatz": ansatz, "circuit": circuit_amplitude},
+    "variational_block": {"ansatz":variational_block, "circuit": circuit_variational},
 }
 
 
@@ -143,18 +154,13 @@ def quantum_optimization_simulation(num_qubits=2, ansatz_params=None, optimizer=
     def circuit1(params, option_ansatz): # 'option_ansatz' ahora será el nombre
         """QNode que inicializa el estado cuántico usando el ansatz seleccionado."""
 
-        ansatz_function = ansatz_library.get(option_ansatz) # Obtiene la función ansatz del diccionario
+        ansatz_function = ansatz_library.get(option_ansatz).get("ansatz") # Obtiene la función ansatz del diccionario
 
         if ansatz_function is None:
-            raise ValueError(f"Ansatz '{option_ansatz}' no reconocido en ansatz_library.")
+            raise ValueError(f"Ansatz '{ansatz_library.get(option_ansatz).get("ansatz")}' no reconocido en ansatz_library.")
 
-        if option_ansatz == "amplitude": # Si es 'amplitude', usa tu ansatz vectorial original
-            v = ansatz(params)
-            qml.AmplitudeEmbedding(v, wires=range(1,num_qubits+1), normalize=False)
-            qml.AmplitudeEmbedding(v, wires=range(num_qubits+1, 2 * num_qubits+1), normalize=False)
-
-        elif option_ansatz == "variational_block": # Si es variational_block, usa la función variational_block original
-            variational_block(params, num_qubits) # Usa la función variational_block original
+        circuit_f = ansatz_library.get(option_ansatz).get("circuit")
+        circuit_f(params, num_qubits)
 
         # El wire extra (índice 2*num_qubits) se deja en el estado |0>
         # Aplicar la operación Y_extended en wires [num_qubits, ..., 2*num_qubits]
@@ -169,20 +175,13 @@ def quantum_optimization_simulation(num_qubits=2, ansatz_params=None, optimizer=
     def circuit2(params, option_ansatz): # 'option_ansatz' ahora será el nombre
         """QNode que extiende qc1 con U_b†."""
 
-        ansatz_function = ansatz_library.get(option_ansatz) # Obtiene la función ansatz del diccionario
+        ansatz_function = ansatz_library.get(option_ansatz).get("ansatz") # Obtiene la función ansatz del diccionario
 
         if ansatz_function is None:
-            raise ValueError(f"Ansatz '{option_ansatz}' no reconocido en ansatz_library.")
+            raise ValueError(f"Ansatz '{ansatz_library.get(option_ansatz).get("ansatz")}' no reconocido en ansatz_library.")
 
-
-        if option_ansatz == "amplitude": # Si es 'amplitude', usa tu ansatz vectorial original
-            v = ansatz(params)
-            qml.AmplitudeEmbedding(v, wires=range(1,num_qubits+1), normalize=False)
-            qml.AmplitudeEmbedding(v, wires=range(num_qubits+1, 2 * num_qubits+1), normalize=False)
-
-        elif option_ansatz == "variational_block": # Si es variational_block, usa la función variational_block original
-            variational_block(params, num_qubits) # Usa la función variational_block original
-
+        circuit_f = ansatz_library.get(option_ansatz).get("circuit")
+        circuit_f(params, num_qubits)
 
         # El wire extra (índice 2*num_qubits) se deja en el estado |0>
         # Aplicar la operación Y_extended en wires [num_qubits, ..., 2*num_qubits]
