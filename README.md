@@ -30,3 +30,4 @@ Cambios futuros
 - Cálculo de gradiente analítico
 - Cálculos con números complejos (!)
 - Descomposición de matrices
+- Los optimizadores podrían refactorizarse también

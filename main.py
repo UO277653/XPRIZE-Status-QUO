@@ -7,6 +7,9 @@ from scipy.linalg import sqrtm, polar
 from scipy.optimize import minimize
 import torch
 
+#####
+## PARAMETROS INICIALES
+#####
 # Crear Y y V de tamaño correspondiente
 Y = np.array([
     [1, -1, 0, 0],
@@ -19,6 +22,9 @@ V = np.array([1, 1.1, 0.95, 0.9])
 max_iters = 1000     # Máximo número de iteraciones
 tolerance = 1e-9     # Tolerancia para la convergencia
 
+#####
+## ANSATZS Y CIRCUITOS
+#####
 def ansatz(params):
     r"""Calcula el vector v a partir del vector de parámetros params.
 
@@ -84,8 +90,10 @@ ansatz_library = {
     "variational_block": {"ansatz":variational_block, "circuit": circuit_variational},
 }
 
-
-def create_unitaries(Y, B, num_qubits):
+#####
+## CREACION DE MATRICES UNITARIAS
+#####
+def create_unitaries(Y, B):
     r"""Crea las matrices unitarias Y_extended y U_b† (calculadas a partir de B).
 
     Args:
@@ -96,7 +104,6 @@ def create_unitaries(Y, B, num_qubits):
     Returns:
         tuple: (Y_extended, U_b_dagger, Y_norm) donde Y_extended es la unidad extendida y U_b_dagger es el operador U_b†.
     """
-    dim = 2 ** num_qubits
     # Normalización y cálculo de Y_extended
     Y_norm = np.max(np.abs(np.linalg.eigvals(Y)))
     Y_normalized = Y / Y_norm
@@ -123,13 +130,16 @@ def create_unitaries(Y, B, num_qubits):
 
     return Y_extended, U_b_dagger, Y_norm
 
+#####
+## OPTIMIZACION (función principal)
+#####
 def quantum_optimization_simulation(num_qubits=2, ansatz_params=None, optimizer="basic", ansatz_name="variational_block"):
     r"""Simulación cuántica usando PennyLane con distintos optimizadores y ansatz.
 
     Args:
         num_qubits (int, opcional): Número de qubits para cada uno de los dos registros.
         ansatz_params (list, opcional): Parámetros iniciales para el ansatz.
-        optimizer (str, opcional): Método de optimización a usar ('basic', 'sequential', 'cobyla' o 'adam').
+        optimizer (str, opcional): Metodo de optimización a usar ('basic', 'sequential', 'cobyla' o 'adam').
         ansatz_name (str, opcional): Nombre del ansatz a usar ('amplitude', 'variational_block', ...).
     """
     global learning_rate, loss_option
@@ -143,7 +153,7 @@ def quantum_optimization_simulation(num_qubits=2, ansatz_params=None, optimizer=
     B_norm = np.linalg.norm(B)  # Precalcular <B|B>
 
     # Obtener las matrices unitarias a usar
-    Y_extended, U_b_dagger, Y_norm = create_unitaries(Y, B, num_qubits)
+    Y_extended, U_b_dagger, Y_norm = create_unitaries(Y, B)
 
     # Definir el dispositivo de PennyLane. Total de wires: 2*num_qubits + 1
     total_wires = 2 * num_qubits + 1
@@ -151,14 +161,8 @@ def quantum_optimization_simulation(num_qubits=2, ansatz_params=None, optimizer=
 
     # Circuito qc1: Inicializa dos registros y aplica Y_extended y las compuertas CNOT.
     @qml.qnode(dev)
-    def circuit1(params, option_ansatz): # 'option_ansatz' ahora será el nombre
+    def circuit1(params, option_ansatz):
         """QNode que inicializa el estado cuántico usando el ansatz seleccionado."""
-
-        ansatz_function = ansatz_library.get(option_ansatz).get("ansatz") # Obtiene la función ansatz del diccionario
-
-        if ansatz_function is None:
-            raise ValueError(f"Ansatz '{ansatz_library.get(option_ansatz).get("ansatz")}' no reconocido en ansatz_library.")
-
         circuit_f = ansatz_library.get(option_ansatz).get("circuit")
         circuit_f(params, num_qubits)
 
@@ -172,14 +176,8 @@ def quantum_optimization_simulation(num_qubits=2, ansatz_params=None, optimizer=
 
     # Circuito qc2: Igual que qc1 pero extiende con U_b† en el primer registro.
     @qml.qnode(dev)
-    def circuit2(params, option_ansatz): # 'option_ansatz' ahora será el nombre
+    def circuit2(params, option_ansatz):
         """QNode que extiende qc1 con U_b†."""
-
-        ansatz_function = ansatz_library.get(option_ansatz).get("ansatz") # Obtiene la función ansatz del diccionario
-
-        if ansatz_function is None:
-            raise ValueError(f"Ansatz '{ansatz_library.get(option_ansatz).get("ansatz")}' no reconocido en ansatz_library.")
-
         circuit_f = ansatz_library.get(option_ansatz).get("circuit")
         circuit_f(params, num_qubits)
 
@@ -198,8 +196,8 @@ def quantum_optimization_simulation(num_qubits=2, ansatz_params=None, optimizer=
         v = ansatz(params)
         V_norm = 1 / v[0]  # Se asume que v[0] ≠ 0 (normalización en pu)
 
-        statevector1 = circuit1(params, ansatz_name) # PASA ansatz_name aquí, para que los circuitos sepan qué ansatz usar
-        statevector2 = circuit2(params, ansatz_name) # PASA ansatz_name aquí también
+        statevector1 = circuit1(params, ansatz_name)
+        statevector2 = circuit2(params, ansatz_name)
 
         # Extraer coeficientes relevantes (se toma statevector1[1:dim])
         shots_array = np.abs(statevector1[1:dim]) ** 2
@@ -268,7 +266,6 @@ def quantum_optimization_simulation(num_qubits=2, ansatz_params=None, optimizer=
                 break
 
             # Calcular el gradiente analítico
-            grad = grad_fn(ansatz_params)
             grad = grad_fn(ansatz_params)
             print("Grad:", grad)
             print("Type of grad:", type(grad))
