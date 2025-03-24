@@ -14,8 +14,11 @@ import torch
 Y = np.array([[1, -1, 0, 0], [-1, 2, -1, 0], [0, -1, 2, -1], [0, 0, -1, 1]], dtype=complex) * 5
 V = np.array([1, 1.1, 0.95, 0.9])
 
-max_iters = 2000  # Máximo número de iteraciones
+max_iters = 1000  # Máximo número de iteraciones
 tolerance = 1e-9  # Tolerancia para la convergencia
+
+anotarConvergencia = True  # Flag para indicar que se quieren guardar en un fichero los resultados que han convergido
+anotarConvergenciaTolerance = 100 / 1e6  # Umbral de tolerancia para guardar configuraciones, igualar a tolerance si se quieren solo los convergidos totalmente
 
 
 #####
@@ -325,11 +328,20 @@ def quantum_optimization_simulation(num_qubits=2, ansatz_params=None, optimizer=
     max_err_V = np.max(err_V)
     print(f"Error máximo en V: {max_err_V}, Vreal/ Vcalc: {V / np.array(Vsol)}")
 
+    if (anotarConvergencia and loss <= anotarConvergenciaTolerance):
+        with open("parametrosConvergencia.txt", "a") as f:
+            f.write("Convergencia alcanzada usando {}.\n".format(optimizer))
+            f.write(
+                "\nRadio: {}, Learning rate: {}, loss option: {}, scale: {} y método: {}\n".format(radius, learning_rate, loss_option, scale, method))
+            f.write("Iter {}: Loss x 1e6 = {:.2f}, Params = {}\n".format(iter + 1, loss * 1e6, ansatz_params))
+            f.write("Error máximo en V: {}, Vreal/ Vcalc: {}\n".format(max_err_V, V / np.array(Vsol)))
+            f.write("\n----------------------------------------\n")
+
 
 if __name__ == "__main__":
     from time import time
 
-    for radius in np.arange(0.01, 0.2, 0.01):
+    for radius in np.arange(0.1, 0.2, 0.01):
         for learning_rate in [0.1]:
             for loss_option in [0]:
                 for scale in [0]:

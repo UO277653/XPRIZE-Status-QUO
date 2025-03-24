@@ -1,0 +1,7 @@
+Convergencia alcanzada usando analytic.
+
+Radio: 0.1, Learning rate: 0.1, loss option: 4, scale: 0 y método: analytic
+Iter 1000: Loss x 1e6 = 65.51, Params = [ 1.57077247 -0.51063222 -1.35218119]
+Error máximo en V: 0.0023801268353568217, Vreal/ Vcalc: [1.         1.         0.99881498 0.99736239]
+
+----------------------------------------
