@@ -2,8 +2,10 @@ import os
 
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 import pennylane as qml
-import numpy as np
 from scipy.linalg import sqrtm, polar
+
+from pennylane import numpy as np
+
 
 from scipy.optimize import minimize
 import torch
@@ -147,7 +149,7 @@ def quantum_optimization_simulation(num_qubits=2, ansatz_params=None, optimizer=
     global learning_rate, loss_option
 
     if ansatz_params is None:
-        ansatz_params = [np.pi / 4] * (2 ** num_qubits - 1)  # Inicialización de parámetros
+        ansatz_params = np.array([np.pi / 4] * (2 ** num_qubits - 1), requires_grad=True)
 
     # Calcular B y su norma
     B = V * (Y @ V)
@@ -276,12 +278,6 @@ def quantum_optimization_simulation(num_qubits=2, ansatz_params=None, optimizer=
 
             # Calcular el gradiente analítico
             grad = grad_fn(ansatz_params)
-            print("Grad:", grad)
-            print("Type of grad:", type(grad))
-
-            # Si es un tuple y quieres ver el tipo de cada elemento:
-            for i, g in enumerate(grad):
-                print(f"grad[{i}] =", g, "| type:", type(g))
 
             ansatz_params = ansatz_params - learning_rate * grad
 
