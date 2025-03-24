@@ -260,7 +260,7 @@ def quantum_optimization_simulation(num_qubits=2, ansatz_params=None, optimizer=
         # Definir la función de costo (loss) que usa los circuitos
 
     # Obtener la función gradiente analítica con PennyLane
-    grad_fn = qml.grad(calculate_loss_with_simulation(ansatz_params))
+    grad_fn = qml.grad(calculate_loss_with_simulation)
 
     if optimizer == "analytic":
         for iter in range(max_iters):
@@ -275,7 +275,6 @@ def quantum_optimization_simulation(num_qubits=2, ansatz_params=None, optimizer=
                 break
 
             # Calcular el gradiente analítico
-            grad = grad_fn(ansatz_params)
             grad = grad_fn(ansatz_params)
             print("Grad:", grad)
             print("Type of grad:", type(grad))
@@ -362,7 +361,7 @@ if __name__ == "__main__":
                     if scale == 0:
                         loss_option = 4
                     PEN_COEF_SCALE = 0.01 * scale
-                    for method in ["sequential"]:  # Se puede probar también "basic", "cobyla" o "adam"
+                    for method in ["analytic"]:  # Se puede probar también "basic", "cobyla" o "adam"
                         print(
                             f"\nRadio: {radius}, Learning rate: {learning_rate}, loss option: {loss_option}, scale: {scale} y método: {method}")
                         start = time()
