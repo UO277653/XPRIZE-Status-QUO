@@ -8,6 +8,9 @@ from scipy.linalg import sqrtm, polar
 from scipy.optimize import minimize
 import torch
 
+#####
+## PARAMETROS INICIALES
+#####
 # Crear Y y V de tamaño correspondiente
 Y = np.array([
     [1, -1, 0, 0],
@@ -21,6 +24,9 @@ max_iters = 1000  # Máximo número de iteraciones
 tolerance = 1e-9  # Tolerancia para la convergencia
 
 
+#####
+## ANSATZS Y CIRCUITOS
+#####
 def ansatz(params):
     r"""Calcula el vector v a partir del vector de parámetros params.
 
@@ -41,6 +47,14 @@ def ansatz(params):
     v = v / np.linalg.norm(v)
     return v
 
+def circuit_amplitude(params, num_qubits):
+    v = ansatz(params)
+    qml.AmplitudeEmbedding(v, wires=range(1,
+                                          num_qubits + 1),
+                           normalize=False)
+    qml.AmplitudeEmbedding(v, wires=range(
+        num_qubits + 1, 2 * num_qubits + 1),
+                           normalize=False)
 
 def variational_block(weights, n_qubits):
     """
@@ -69,8 +83,19 @@ def variational_block(weights, n_qubits):
     for idx, param in enumerate(extra_params):
         qml.RY(param, wires=idx % n_qubits)  # Distribuye los parámetros sobrantes entre los qubits
 
+def circuit_variational(params, num_qubits):
+    variational_block(params,
+                      num_qubits)  # Usa la función variational_block original
 
-def create_unitaries(Y, B, num_qubits):
+ansatz_library = {
+    "amplitude": {"ansatz": ansatz, "circuit": circuit_amplitude},
+    "variational_block": {"ansatz":variational_block, "circuit": circuit_variational},
+}
+
+#####
+## CREACION DE MATRICES UNITARIAS
+#####
+def create_unitaries(Y, B):
     r"""Crea las matrices unitarias Y_extended y U_b† (calculadas a partir de B).
 
     Args:
@@ -81,7 +106,6 @@ def create_unitaries(Y, B, num_qubits):
     Returns:
         tuple: (Y_extended, U_b_dagger, Y_norm) donde Y_extended es la unidad extendida y U_b_dagger es el operador U_b†.
     """
-    dim = 2 ** num_qubits
     # Normalización y cálculo de Y_extended
     Y_norm = np.max(np.abs(np.linalg.eigvals(Y)))
     Y_normalized = Y / Y_norm
@@ -108,14 +132,17 @@ def create_unitaries(Y, B, num_qubits):
 
     return Y_extended, U_b_dagger, Y_norm
 
-
-def quantum_optimization_simulation(num_qubits=2, ansatz_params=None, optimizer="basic"):
-    r"""Simulación cuántica usando PennyLane con distintos optimizadores.
+#####
+## OPTIMIZACION (función principal)
+#####
+def quantum_optimization_simulation(num_qubits=2, ansatz_params=None, optimizer="basic", ansatz_name="amplitude"):
+    r"""Simulación cuántica usando PennyLane con distintos optimizadores y ansatz
 
     Args:
         num_qubits (int, opcional): Número de qubits para cada uno de los dos registros.
         ansatz_params (list, opcional): Parámetros iniciales para el ansatz.
         optimizer (str, opcional): Método de optimización a usar ('basic', 'sequential', 'cobyla' o 'adam').
+        ansatz_name (str, opcional): Nombre del ansatz a usar ('amplitude', 'variational_block',...)
     """
     global learning_rate, loss_option
 
@@ -128,7 +155,7 @@ def quantum_optimization_simulation(num_qubits=2, ansatz_params=None, optimizer=
     B_norm = np.linalg.norm(B)  # Precalcular <B|B>
 
     # Obtener las matrices unitarias a usar
-    Y_extended, U_b_dagger, Y_norm = create_unitaries(Y, B, num_qubits)
+    Y_extended, U_b_dagger, Y_norm = create_unitaries(Y, B)
 
     # Definir el dispositivo de PennyLane. Total de wires: 2*num_qubits + 1
     total_wires = 2 * num_qubits + 1
@@ -136,26 +163,13 @@ def quantum_optimization_simulation(num_qubits=2, ansatz_params=None, optimizer=
 
     # Circuito qc1: Inicializa dos registros y aplica Y_extended y las compuertas CNOT.
     @qml.qnode(dev)
-    def circuit1(params, option_ansatz="amplitude"):
+    def circuit1(params, option_ansatz):
         """
-        QNode que inicializa el estado cuántico de dos maneras posibles:
-        1) Amplitude embedding, si option_ansatz == 'amplitude'
-        2) Bloques variacionales, si option_ansatz == 'variational_block'
+        QNode que inicializa el estado cuántico usando el ansatz seleccionado
         """
-        if option_ansatz == "amplitude":
-            # 1) Usar el ansatz vectorial
-            v = ansatz(params)
-            # Por ejemplo, si quieres inicializar 'num_qubits' wires
-            # Inicializar primer registro con el vector de estado usando AmplitudeEmbedding
-            qml.AmplitudeEmbedding(v, wires=range(1, num_qubits + 1), normalize=False)
-            # Inicializar segundo registro con el mismo vector
-            qml.AmplitudeEmbedding(v, wires=range(num_qubits + 1, 2 * num_qubits + 1),
-                                   normalize=False)
 
-        elif option_ansatz == "variational_block":
-            # 2) Usar el ansatz de compuertas
-            # Asumimos que 'params' es un array del tamaño 'n_qubits'
-            variational_block(params, num_qubits)
+        circuit_f = ansatz_library.get(option_ansatz).get("circuit")
+        circuit_f(params, num_qubits)
 
         # El wire extra (índice 2*num_qubits) se deja en el estado |0>
         # Aplicar la operación Y_extended en wires [num_qubits, ..., 2*num_qubits]
@@ -167,22 +181,11 @@ def quantum_optimization_simulation(num_qubits=2, ansatz_params=None, optimizer=
 
     # Circuito qc2: Igual que qc1 pero extiende con U_b† en el primer registro.
     @qml.qnode(dev)
-    def circuit2(params, option_ansatz="amplitude"):
+    def circuit2(params, option_ansatz):
+        """QNode que extiende qc1 con U_b†."""
+        circuit_f = ansatz_library.get(option_ansatz).get("circuit")
+        circuit_f(params, num_qubits)
 
-        if option_ansatz == "amplitude":
-            # 1) Usar el ansatz vectorial
-            v = ansatz(params)
-            # Por ejemplo, si quieres inicializar 'num_qubits' wires
-            # Inicializar primer registro con el vector de estado usando AmplitudeEmbedding
-            qml.AmplitudeEmbedding(v, wires=range(1, num_qubits + 1), normalize=False)
-            # Inicializar segundo registro con el mismo vector
-            qml.AmplitudeEmbedding(v, wires=range(num_qubits + 1, 2 * num_qubits + 1),
-                                   normalize=False)
-
-        elif option_ansatz == "variational_block":
-            # 2) Usar el ansatz de compuertas
-            # Asumimos que 'params' es un array del tamaño 'n_qubits'
-            variational_block(params, num_qubits)
         # El wire extra (índice 2*num_qubits) se deja en el estado |0>
         # Aplicar la operación Y_extended en wires [num_qubits, ..., 2*num_qubits]
         qml.QubitUnitary(Y_extended, wires=range(num_qubits + 1))
@@ -198,17 +201,13 @@ def quantum_optimization_simulation(num_qubits=2, ansatz_params=None, optimizer=
         v = ansatz(params)
         V_norm = 1 / v[0]  # Se asume que v[0] ≠ 0 (normalización en pu)
 
-        statevector1 = circuit1(params, "amplitude")
-        # print(statevector1)
+        statevector1 = circuit1(params, ansatz_name)
+        statevector2 = circuit2(params, ansatz_name)
+
         # Extraer coeficientes relevantes (se toma statevector1[1:dim])
         shots_array = np.abs(statevector1[1:dim]) ** 2
         shots_total = np.sum(shots_array)
         norm_yv_cnot = np.sqrt(shots_total)
-
-        statevector2 = circuit2(params, "amplitude")
-        # print(statevector2)
-        # import sys
-        # sys.exit()
 
         # Extraer el coeficiente en la posición 0
         shots_array2 = np.abs(statevector2[0]) ** 2
@@ -348,7 +347,6 @@ def quantum_optimization_simulation(num_qubits=2, ansatz_params=None, optimizer=
     v0 = v[0]
     Vsol = [x / v0 for x in v]
     print(f"Iter {iter + 1}: Loss x 1e6 = {loss * 1e6:.2f}, Params = {ansatz_params}")
-    Bcalc = np.array(Vsol) * (Y @ np.array(Vsol))
     err_V = np.abs(V - np.array(Vsol))
     max_err_V = np.max(err_V)
     print(f"Error máximo en V: {max_err_V}, Vreal/ Vcalc: {V / np.array(Vsol)}")
@@ -368,7 +366,10 @@ if __name__ == "__main__":
                         print(
                             f"\nRadio: {radius}, Learning rate: {learning_rate}, loss option: {loss_option}, scale: {scale} y método: {method}")
                         start = time()
-                        print(f"Optimizando con {method}")
+                        ansatz_name = "amplitude"
                         quantum_optimization_simulation(num_qubits=2, ansatz_params=None,
-                                                        optimizer=method)
-                        print(f"Tiempo de ejecución: {time() - start} segundos")
+                                                        optimizer=method,
+                                                        ansatz_name=ansatz_name)
+                        print(
+                            f"Optimizando con {method} y ansatz {ansatz_name}")
+                        print(f"Tiempo de ejecución: {time() - start} segundos")
