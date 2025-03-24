@@ -3,10 +3,7 @@ import os
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 import pennylane as qml
 from scipy.linalg import sqrtm, polar
-
 from pennylane import numpy as np
-
-
 from scipy.optimize import minimize
 import torch
 
@@ -14,15 +11,10 @@ import torch
 ## PARAMETROS INICIALES
 #####
 # Crear Y y V de tamaño correspondiente
-Y = np.array([
-    [1, -1, 0, 0],
-    [-1, 2, -1, 0],
-    [0, -1, 2, -1],
-    [0, 0, -1, 1]
-], dtype=complex) * 5
+Y = np.array([[1, -1, 0, 0], [-1, 2, -1, 0], [0, -1, 2, -1], [0, 0, -1, 1]], dtype=complex) * 5
 V = np.array([1, 1.1, 0.95, 0.9])
 
-max_iters = 1000  # Máximo número de iteraciones
+max_iters = 2000  # Máximo número de iteraciones
 tolerance = 1e-9  # Tolerancia para la convergencia
 
 
@@ -49,14 +41,12 @@ def ansatz(params):
     v = v / np.linalg.norm(v)
     return v
 
+
 def circuit_amplitude(params, num_qubits):
     v = ansatz(params)
-    qml.AmplitudeEmbedding(v, wires=range(1,
-                                          num_qubits + 1),
-                           normalize=False)
-    qml.AmplitudeEmbedding(v, wires=range(
-        num_qubits + 1, 2 * num_qubits + 1),
-                           normalize=False)
+    qml.AmplitudeEmbedding(v, wires=range(1, num_qubits + 1), normalize=False)
+    qml.AmplitudeEmbedding(v, wires=range(num_qubits + 1, 2 * num_qubits + 1), normalize=False)
+
 
 def variational_block(weights, n_qubits):
     """
@@ -85,14 +75,14 @@ def variational_block(weights, n_qubits):
     for idx, param in enumerate(extra_params):
         qml.RY(param, wires=idx % n_qubits)  # Distribuye los parámetros sobrantes entre los qubits
 
-def circuit_variational(params, num_qubits):
-    variational_block(params,
-                      num_qubits)  # Usa la función variational_block original
 
-ansatz_library = {
-    "amplitude": {"ansatz": ansatz, "circuit": circuit_amplitude},
-    "variational_block": {"ansatz":variational_block, "circuit": circuit_variational},
-}
+def circuit_variational(params, num_qubits):
+    variational_block(params, num_qubits)  # Usa la función variational_block original
+
+
+ansatz_library = {"amplitude": {"ansatz": ansatz, "circuit": circuit_amplitude},
+                  "variational_block": {"ansatz": variational_block, "circuit": circuit_variational}, }
+
 
 #####
 ## CREACION DE MATRICES UNITARIAS
@@ -112,10 +102,7 @@ def create_unitaries(Y, B):
     Y_norm = np.max(np.abs(np.linalg.eigvals(Y)))
     Y_normalized = Y / Y_norm
     sqrt_diff = sqrtm(np.eye(len(Y)) - Y_normalized @ Y_normalized)
-    Y_extended = np.block([
-        [Y_normalized, sqrt_diff],
-        [sqrt_diff, -Y_normalized]
-    ])
+    Y_extended = np.block([[Y_normalized, sqrt_diff], [sqrt_diff, -Y_normalized]])
     Y_extended, _ = polar(Y_extended)  # Se toma la parte unitaria
 
     # Construir U_b† basado en B
@@ -133,6 +120,7 @@ def create_unitaries(Y, B):
     U_b_dagger = U_b.conj().T
 
     return Y_extended, U_b_dagger, Y_norm
+
 
 #####
 ## OPTIMIZACION (función principal)
@@ -221,10 +209,8 @@ def quantum_optimization_simulation(num_qubits=2, ansatz_params=None, optimizer=
 
         losses = []
         losses.append(1 - (norm_after_ub) / norm_yv_cnot + pen_coef * (norm_YV_cnot - B_norm) ** 2)
-        losses.append(
-            1 - (norm_after_ub) ** 2 / norm_yv_cnot ** 2 + pen_coef * (norm_YV_cnot - B_norm) ** 2)
-        losses.append(
-            1 - (norm_after_ub) ** 2 / norm_yv_cnot ** 2 + pen_coef * (norm_YV_cnot - B_norm) ** 4)
+        losses.append(1 - (norm_after_ub) ** 2 / norm_yv_cnot ** 2 + pen_coef * (norm_YV_cnot - B_norm) ** 2)
+        losses.append(1 - (norm_after_ub) ** 2 / norm_yv_cnot ** 2 + pen_coef * (norm_YV_cnot - B_norm) ** 4)
         a2 = norm_YV_cnot ** 2
         b2 = B_norm ** 2
         ab = norm_after_ub * Y_norm * B_norm * V_norm * V_norm
@@ -253,13 +239,11 @@ def quantum_optimization_simulation(num_qubits=2, ansatz_params=None, optimizer=
             loss_plus = calculate_loss_with_simulation(params_plus)
             loss_minus = calculate_loss_with_simulation(params_minus)
             if loss_plus is None or loss_minus is None:
-                print(
-                    f"Error en la evaluación de la pérdida para el parámetro {i}. Saltando actualización.")
+                print(f"Error en la evaluación de la pérdida para el parámetro {i}. Saltando actualización.")
                 continue
             grad = (loss_plus - loss_minus) / (2 * delta)
             params[i] -= learning_rate * grad
-        return params
-        # Definir la función de costo (loss) que usa los circuitos
+        return params  # Definir la función de costo (loss) que usa los circuitos
 
     # Obtener la función gradiente analítica con PennyLane
     grad_fn = qml.grad(calculate_loss_with_simulation)
@@ -268,8 +252,7 @@ def quantum_optimization_simulation(num_qubits=2, ansatz_params=None, optimizer=
         for iter in range(max_iters):
             loss = calculate_loss_with_simulation(ansatz_params)
             if loss is None:
-                print(
-                    "NO CONVERGIÓ!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+                print("NO CONVERGIÓ!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
                 loss = -100
                 break
             elif loss < tolerance:
@@ -286,8 +269,7 @@ def quantum_optimization_simulation(num_qubits=2, ansatz_params=None, optimizer=
         for iter in range(max_iters):
             loss = calculate_loss_with_simulation(ansatz_params)
             if loss is None:
-                print(
-                    "NO CONVERGIÓ!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+                print("NO CONVERGIÓ!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
                 loss = -100
                 break
             elif loss < tolerance:
@@ -300,8 +282,7 @@ def quantum_optimization_simulation(num_qubits=2, ansatz_params=None, optimizer=
         for iter in range(max_iters):
             loss = calculate_loss_with_simulation(ansatz_params)
             if loss is None:
-                print(
-                    "NO CONVERGIÓ!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+                print("NO CONVERGIÓ!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
                 loss = -100
                 break
             elif loss < tolerance:
@@ -313,8 +294,7 @@ def quantum_optimization_simulation(num_qubits=2, ansatz_params=None, optimizer=
         def loss_func(params):
             return calculate_loss_with_simulation(params)
 
-        result = minimize(loss_func, ansatz_params, tol=tolerance, method="COBYLA",
-                          options={"maxiter": max_iters, "disp": True})
+        result = minimize(loss_func, ansatz_params, tol=tolerance, method="COBYLA", options={"maxiter": max_iters, "disp": True})
         ansatz_params = result.x
         print("Convergencia alcanzada usando COBYLA.\n")
         iter = result.nfev
@@ -334,8 +314,7 @@ def quantum_optimization_simulation(num_qubits=2, ansatz_params=None, optimizer=
                 print("Convergencia alcanzada usando Adam.\n")
                 break
     else:
-        raise ValueError(
-            f"Optimizer '{optimizer}' no reconocido. Use 'basic', 'cobyla', 'sequential' o 'adam'.")
+        raise ValueError(f"Optimizer '{optimizer}' no reconocido. Use 'basic', 'cobyla', 'sequential' o 'adam'.")
 
     # Resultados finales
     v = ansatz(ansatz_params)
@@ -350,7 +329,7 @@ def quantum_optimization_simulation(num_qubits=2, ansatz_params=None, optimizer=
 if __name__ == "__main__":
     from time import time
 
-    for radius in [0.3]:
+    for radius in np.arange(0.01, 0.2, 0.01):
         for learning_rate in [0.1]:
             for loss_option in [0]:
                 for scale in [0]:
@@ -358,13 +337,9 @@ if __name__ == "__main__":
                         loss_option = 4
                     PEN_COEF_SCALE = 0.01 * scale
                     for method in ["analytic"]:  # Se puede probar también "basic", "cobyla" o "adam"
-                        print(
-                            f"\nRadio: {radius}, Learning rate: {learning_rate}, loss option: {loss_option}, scale: {scale} y método: {method}")
+                        print(f"\nRadio: {radius}, Learning rate: {learning_rate}, loss option: {loss_option}, scale: {scale} y método: {method}")
                         start = time()
                         ansatz_name = "amplitude"
-                        quantum_optimization_simulation(num_qubits=2, ansatz_params=None,
-                                                        optimizer=method,
-                                                        ansatz_name=ansatz_name)
-                        print(
-                            f"Optimizando con {method} y ansatz {ansatz_name}")
+                        quantum_optimization_simulation(num_qubits=2, ansatz_params=None, optimizer=method, ansatz_name=ansatz_name)
+                        print(f"Optimizando con {method} y ansatz {ansatz_name}")
                         print(f"Tiempo de ejecución: {time() - start} segundos")
