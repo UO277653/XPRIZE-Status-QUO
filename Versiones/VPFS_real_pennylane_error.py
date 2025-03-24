@@ -3,13 +3,9 @@ os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 import pennylane as qml
 import numpy as np
 from scipy.linalg import sqrtm, polar
-
 from scipy.optimize import minimize
 import torch
 
-#####
-## PARAMETROS INICIALES
-#####
 # Crear Y y V de tamaño correspondiente
 Y = np.array([
     [1, -1, 0, 0],
@@ -19,12 +15,10 @@ Y = np.array([
 ], dtype=complex) * 5
 V = np.array([1, 1.1, 0.95, 0.9])
 
-max_iters = 1000     # Máximo número de iteraciones
-tolerance = 1e-9     # Tolerancia para la convergencia
+max_iters = 1000      # Máximo número de iteraciones
+tolerance = 1e-9      # Tolerancia para la convergencia
+loss_th = 1e-12       # A partir de ese valor, el learning rate se adapta dinámicamente (si loss_th < tolerance no tiene efecto)
 
-#####
-## ANSATZS Y CIRCUITOS
-#####
 def ansatz(params):
     r"""Calcula el vector v a partir del vector de parámetros params.
 
@@ -41,59 +35,10 @@ def ansatz(params):
         else:
             v.append(params[i] + 1)
     v = np.array(v)
-    # v = np.array([1, 1.1, 0.95, 0.9])
     v = v / np.linalg.norm(v)
     return v
 
-def circuit_amplitude(params, num_qubits):
-    v = ansatz(params)
-    qml.AmplitudeEmbedding(v, wires=range(1,
-                                          num_qubits + 1),
-                           normalize=False)
-    qml.AmplitudeEmbedding(v, wires=range(
-        num_qubits + 1, 2 * num_qubits + 1),
-                           normalize=False)
-
-def variational_block(weights,n_qubits):
-    """
-    Ansatz con entrelazamiento y exactamente 2^n - 1 parámetros.
-
-    Args:
-        weights (array-like): Parámetros del ansatz. Debe tener longitud 2^n - 1.
-    """
-    num_params = len(weights)
-    assert num_params == 2**n_qubits - 1, f"Se esperaban {2**n_qubits - 1} parámetros, pero se recibieron {num_params}."
-
-    # 1. Inicializar en superposición uniforme con Hadamard
-    for idx in range(n_qubits):
-        qml.Hadamard(wires=idx)
-
-    # 2. Aplicar rotaciones RY con los primeros n_qubits parámetros
-    for idx in range(n_qubits):
-        qml.RY(weights[idx], wires=idx)
-
-    # 3. Aplicar entrelazamiento (CNOT en topología lineal)
-    for idx in range(n_qubits - 1):
-        qml.CNOT(wires=[idx, idx + 1])
-
-    # 4. Aplicar rotaciones adicionales para alcanzar 2^n - 1 parámetros
-    extra_params = weights[n_qubits:]
-    for idx, param in enumerate(extra_params):
-        qml.RY(param, wires=idx % n_qubits)  # Distribuye los parámetros sobrantes entre los qubits
-
-def circuit_variational(params, num_qubits):
-    variational_block(params,
-                      num_qubits)  # Usa la función variational_block original
-
-ansatz_library = {
-    "amplitude": {"ansatz": ansatz, "circuit": circuit_amplitude},
-    "variational_block": {"ansatz":variational_block, "circuit": circuit_variational},
-}
-
-#####
-## CREACION DE MATRICES UNITARIAS
-#####
-def create_unitaries(Y, B):
+def create_unitaries(Y, B, num_qubits):
     r"""Crea las matrices unitarias Y_extended y U_b† (calculadas a partir de B).
 
     Args:
@@ -104,6 +49,7 @@ def create_unitaries(Y, B):
     Returns:
         tuple: (Y_extended, U_b_dagger, Y_norm) donde Y_extended es la unidad extendida y U_b_dagger es el operador U_b†.
     """
+    dim = 2 ** num_qubits
     # Normalización y cálculo de Y_extended
     Y_norm = np.max(np.abs(np.linalg.eigvals(Y)))
     Y_normalized = Y / Y_norm
@@ -130,17 +76,13 @@ def create_unitaries(Y, B):
 
     return Y_extended, U_b_dagger, Y_norm
 
-#####
-## OPTIMIZACION (función principal)
-#####
-def quantum_optimization_simulation(num_qubits=2, ansatz_params=None, optimizer="basic", ansatz_name="variational_block"):
-    r"""Simulación cuántica usando PennyLane con distintos optimizadores y ansatz.
+def quantum_optimization_simulation(num_qubits=2, ansatz_params=None, optimizer="basic"):
+    r"""Simulación cuántica usando PennyLane con distintos optimizadores.
 
     Args:
         num_qubits (int, opcional): Número de qubits para cada uno de los dos registros.
         ansatz_params (list, opcional): Parámetros iniciales para el ansatz.
-        optimizer (str, opcional): Metodo de optimización a usar ('basic', 'sequential', 'cobyla' o 'adam').
-        ansatz_name (str, opcional): Nombre del ansatz a usar ('amplitude', 'variational_block', ...).
+        optimizer (str, opcional): Método de optimización a usar ('basic', 'sequential', 'cobyla' o 'adam').
     """
     global learning_rate, loss_option
 
@@ -153,7 +95,7 @@ def quantum_optimization_simulation(num_qubits=2, ansatz_params=None, optimizer=
     B_norm = np.linalg.norm(B)  # Precalcular <B|B>
 
     # Obtener las matrices unitarias a usar
-    Y_extended, U_b_dagger, Y_norm = create_unitaries(Y, B)
+    Y_extended, U_b_dagger, Y_norm = create_unitaries(Y, B, num_qubits)
 
     # Definir el dispositivo de PennyLane. Total de wires: 2*num_qubits + 1
     total_wires = 2 * num_qubits + 1
@@ -161,57 +103,53 @@ def quantum_optimization_simulation(num_qubits=2, ansatz_params=None, optimizer=
 
     # Circuito qc1: Inicializa dos registros y aplica Y_extended y las compuertas CNOT.
     @qml.qnode(dev)
-    def circuit1(params, option_ansatz):
-        """QNode que inicializa el estado cuántico usando el ansatz seleccionado."""
-        circuit_f = ansatz_library.get(option_ansatz).get("circuit")
-        circuit_f(params, num_qubits)
-
+    def circuit1(params):
+        v = ansatz(params)
+        # Inicializar primer registro con el vector de estado usando AmplitudeEmbedding
+        qml.AmplitudeEmbedding(v, wires=range(num_qubits), normalize=False)
+        # Inicializar segundo registro con el mismo vector
+        qml.AmplitudeEmbedding(v, wires=range(num_qubits, 2 * num_qubits), normalize=False)
         # El wire extra (índice 2*num_qubits) se deja en el estado |0>
         # Aplicar la operación Y_extended en wires [num_qubits, ..., 2*num_qubits]
-        qml.QubitUnitary(Y_extended, wires=range(num_qubits+1))
+        qml.QubitUnitary(Y_extended, wires=range(num_qubits, 2 * num_qubits + 1))
         # Aplicar compuertas CNOT: control en wire i y target en wire i+num_qubits
-        for i in range(1,num_qubits+1):
-            qml.CNOT(wires=[i + num_qubits, i])
+        for i in range(num_qubits):
+            qml.CNOT(wires=[i, i + num_qubits])
         return qml.state()
 
     # Circuito qc2: Igual que qc1 pero extiende con U_b† en el primer registro.
     @qml.qnode(dev)
-    def circuit2(params, option_ansatz):
-        """QNode que extiende qc1 con U_b†."""
-        circuit_f = ansatz_library.get(option_ansatz).get("circuit")
-        circuit_f(params, num_qubits)
-
-        # El wire extra (índice 2*num_qubits) se deja en el estado |0>
-        # Aplicar la operación Y_extended en wires [num_qubits, ..., 2*num_qubits]
-        qml.QubitUnitary(Y_extended, wires=range(num_qubits+1))
-        # Aplicar compuertas CNOT: control en wire i y target en wire i+num_qubits
-        for i in range(1,num_qubits+1):
-            qml.CNOT(wires=[i + num_qubits, i])
+    def circuit2(params):
+        v = ansatz(params)
+        qml.AmplitudeEmbedding(v, wires=range(num_qubits), normalize=False)
+        qml.AmplitudeEmbedding(v, wires=range(num_qubits, 2 * num_qubits), normalize=False)
+        qml.QubitUnitary(Y_extended, wires=range(num_qubits, 2 * num_qubits + 1))
+        for i in range(num_qubits):
+            qml.CNOT(wires=[i, i + num_qubits])
         # Aplicar U_b† en el primer registro
-        qml.QubitUnitary(U_b_dagger, wires=range(num_qubits+1, 2 * num_qubits+1))
+        qml.QubitUnitary(U_b_dagger, wires=range(num_qubits))
         return qml.state()
 
     def calculate_loss_with_simulation(params):
         dim = 2 ** num_qubits
         v = ansatz(params)
         V_norm = 1 / v[0]  # Se asume que v[0] ≠ 0 (normalización en pu)
-
-        statevector1 = circuit1(params, ansatz_name)
-        statevector2 = circuit2(params, ansatz_name)
-
+        
+        statevector1 = circuit1(params)
         # Extraer coeficientes relevantes (se toma statevector1[1:dim])
         shots_array = np.abs(statevector1[1:dim]) ** 2
         shots_total = np.sum(shots_array)
         norm_yv_cnot = np.sqrt(shots_total)
-
+        
+        statevector2 = circuit2(params)
         # Extraer el coeficiente en la posición 0
         shots_array2 = np.abs(statevector2[0]) ** 2
         shots_total2 = np.sum(shots_array2)
         norm_after_ub = np.sqrt(shots_total2)
-
+        
         norm_YV_cnot = norm_yv_cnot * Y_norm * V_norm * V_norm
         pen_coef = PEN_COEF_SCALE / B_norm**2
-
+        
         losses = []
         losses.append(1 - (norm_after_ub) / norm_yv_cnot + pen_coef * (norm_YV_cnot - B_norm)**2)
         losses.append(1 - (norm_after_ub)**2 / norm_yv_cnot**2 + pen_coef * (norm_YV_cnot - B_norm)**2)
@@ -249,35 +187,9 @@ def quantum_optimization_simulation(num_qubits=2, ansatz_params=None, optimizer=
             grad = (loss_plus - loss_minus) / (2 * delta)
             params[i] -= learning_rate * grad
         return params
-        # Definir la función de costo (loss) que usa los circuitos
-
-    # Obtener la función gradiente analítica con PennyLane
-    grad_fn = qml.grad(calculate_loss_with_simulation)
-
-    if optimizer == "analytic":
-        for iter in range(max_iters):
-            loss = calculate_loss_with_simulation(ansatz_params)
-            if loss is None:
-                print("NO CONVERGIÓ!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-                loss = -100
-                break
-            elif loss < tolerance:
-                print("Convergencia alcanzada usando gradiente analítico.")
-                break
-
-            # Calcular el gradiente analítico
-            grad = grad_fn(ansatz_params)
-            print("Grad:", grad)
-            print("Type of grad:", type(grad))
-
-            # Si es un tuple y quieres ver el tipo de cada elemento:
-            for i, g in enumerate(grad):
-                print(f"grad[{i}] =", g, "| type:", type(g))
-
-            ansatz_params = ansatz_params - learning_rate * grad
 
     # Selección del optimizador
-    elif optimizer == "basic":
+    if optimizer == "basic":
         for iter in range(max_iters):
             loss = calculate_loss_with_simulation(ansatz_params)
             if loss is None:
@@ -340,20 +252,14 @@ def quantum_optimization_simulation(num_qubits=2, ansatz_params=None, optimizer=
 
 if __name__ == "__main__":
     from time import time
-    for radius in [0.3]:
+    for radius in [0.2, 0.3, 0.4, 0.5]:
         for learning_rate in [0.1]:
             for loss_option in [0]:
-                for scale in [0]:
+                for scale in [0, 15]:
                     if scale == 0:
                         loss_option = 4
                     PEN_COEF_SCALE = 0.01 * scale
                     for method in ["sequential"]:  # Se puede probar también "basic", "cobyla" o "adam"
                         print(f"\nRadio: {radius}, Learning rate: {learning_rate}, loss option: {loss_option}, scale: {scale} y método: {method}")
                         start = time()
-                        ansatz_name = "amplitude"
-                        quantum_optimization_simulation(num_qubits=2, ansatz_params=None,
-                                                        optimizer=method,
-                                                        ansatz_name=ansatz_name)
-                        print(
-                            f"Optimizando con {method} y ansatz {ansatz_name}")
-                        print(f"Tiempo de ejecución: {time() - start} segundos")
+                        quantum_optimization_simulation(num_qubits=2, ansatz_params=None, optimizer=method)
