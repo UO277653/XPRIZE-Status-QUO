@@ -1,7 +1,149 @@
-Convergencia alcanzada usando analytic.
+Convergencia alcanzada usando cobyla.
 
-Radio: 0.1, Learning rate: 0.1, loss option: 4, scale: 0 y método: analytic
-Iter 1000: Loss x 1e6 = 65.51, Params = [ 1.57077247 -0.51063222 -1.35218119]
-Error máximo en V: 0.0023801268353568217, Vreal/ Vcalc: [1.         1.         0.99881498 0.99736239]
+Radio: 0.1, Learning rate: 0.05, loss option: 4, scale: 0 y método: cobyla
+Iter 167: Loss x 1e6 = 0.01, Params = [-2.07210238 -0.36361397  0.16009018 -1.39817505 -1.20395336  0.64530191]
+Error máximo en V: 1.0906475548671049, Vreal/ Vcalc: [1.         +0.j         2.87983473+16.51692788j 0.90668896 +2.35972126j
+ 1.14245746 -0.86006204j]
+
+----------------------------------------
+Convergencia alcanzada usando cobyla.
+
+Radio: 0.1, Learning rate: 0.05, loss option: 4, scale: 0 y método: cobyla
+Iter 168: Loss x 1e6 = 0.01, Params = [-1.29228415  0.13536804 -0.9905519   2.24653506  0.86735198 -0.16332844]
+Error máximo en V: 1.178875934977971, Vreal/ Vcalc: [ 1.        +0.j         -5.72691477-7.14401892j  0.99551614-1.17368993j
+  5.18700961+0.85480067j]
+
+----------------------------------------
+Convergencia alcanzada usando cobyla.
+
+Radio: 0.1, Learning rate: 0.05, loss option: 4, scale: 0 y método: cobyla
+Iter 135: Loss x 1e6 = 0.01, Params = [-0.51364863  0.14677847  0.03101322 -1.5474292  -1.04186806 -0.12432026]
+Error máximo en V: 1.1367628743973917, Vreal/ Vcalc: [1.        +0.j         0.0819541 +3.50660128j 0.76963165+1.31678407j
+ 1.57922436+0.19734734j]
+
+----------------------------------------
+Convergencia alcanzada usando cobyla.
+
+Radio: 0.1, Learning rate: 0.05, loss option: 4, scale: 0 y método: cobyla
+Iter 147: Loss x 1e6 = 0.01, Params = [-0.43607809  0.45162337 -0.27459816  2.64271495  0.41705332 -0.42812491]
+Error máximo en V: 1.4124479147753422, Vreal/ Vcalc: [ 1.        +0.j         -2.80137965-1.52632091j  1.14043284-0.50526062j
+  1.96795936+0.89808513j]
+
+----------------------------------------
+Convergencia alcanzada usando cobyla.
+
+Radio: 0.1, Learning rate: 0.1, loss option: 4, scale: 0 y método: cobyla
+Iter 130: Loss x 1e6 = 0.02, Params = [-1.08104441  1.77287939 -0.07054277 -1.65362936 -0.73041293 -0.17420218]
+Error máximo en V: 1.1231027432490794, Vreal/ Vcalc: [ 1.        +0.j         -0.5940473 +7.15521301j  0.69244646+0.62019759j
+  1.72183565+0.30301892j]
+
+----------------------------------------
+Convergencia alcanzada usando cobyla.
+
+Radio: 0.1, Learning rate: 0.05, loss option: 4, scale: 0 y método: cobyla
+Iter 150: Loss x 1e6 = 0.01, Params = [-0.95976999  1.2245573  -0.51736683 -2.03594624  0.90014844 -0.31518272]
+Error máximo en V: 1.1904712728368647, Vreal/ Vcalc: [ 1.        +0.j         -2.77333769+5.52590574j  0.60836787-0.76687353j
+  2.7410477 +0.89372291j]
+
+----------------------------------------
+Convergencia alcanzada usando cobyla.
+
+Radio: 0.1, Learning rate: 0.05, loss option: 4, scale: 0 y método: cobyla
+Iter 175: Loss x 1e6 = 0.00, Params = [-1.01715835 -0.18883328  0.05477383  2.8654315   3.98029324  0.50495755]
+Error máximo en V: 1.3004112036153765, Vreal/ Vcalc: [ 1.        +0.j         -6.38902017-1.81066502j -1.39045878+1.54719111j
+  1.36427205-0.75411112j]
+
+----------------------------------------
+Convergencia alcanzada usando cobyla.
+
+Radio: 0.1, Learning rate: 0.05, loss option: 4, scale: 0 y método: cobyla
+Iter 136: Loss x 1e6 = 0.02, Params = [-1.18592525  1.43285491 -1.37126938 -0.42425792  0.59688773 -0.1877401 ]
+Error máximo en V: 0.978242295218832, Vreal/ Vcalc: [1.        +0.j         7.40686419+3.34560184j 0.78879098-0.53604465j
+ 8.00099832+1.52000857j]
+
+----------------------------------------
+Convergencia alcanzada usando cobyla.
+
+Radio: 0.1, Learning rate: 0.05, loss option: 4, scale: 0 y método: cobyla
+Iter 152: Loss x 1e6 = 0.02, Params = [-0.3208218   0.65392829 -0.116212   -1.48550506  0.50836461 -0.46949091]
+Error máximo en V: 1.1366272344808153, Vreal/ Vcalc: [1.        +0.j         0.23730715+2.77556475j 0.99129235-0.55236157j
+ 1.63082811+0.82736087j]
+
+----------------------------------------
+Convergencia alcanzada usando cobyla.
+
+Radio: 0.1, Learning rate: 0.1, loss option: 4, scale: 0 y método: cobyla
+Iter 167: Loss x 1e6 = 0.01, Params = [-1.44975293  0.14197694  0.30149043 -0.59966977  3.48015461  0.30411231]
+Error máximo en V: 1.5490614955527386, Vreal/ Vcalc: [ 1.        +0.j          8.88717999+6.07573951j -1.44407655+0.50848782j
+  1.23316816-0.38702714j]
+
+----------------------------------------
+Convergencia alcanzada usando cobyla.
+
+Radio: 0.1, Learning rate: 0.1, loss option: 4, scale: 0 y método: cobyla
+Iter 161: Loss x 1e6 = 0.02, Params = [-0.39206413  0.82497585 -0.43207993  1.14416605  0.23895342 -0.62362759]
+Error máximo en V: 1.005596686026122, Vreal/ Vcalc: [1.        +0.j         1.25246948-2.75541248j 1.03838787-0.25295932j
+ 2.10865812+1.51696803j]
+
+----------------------------------------
+Convergencia alcanzada usando cobyla.
+
+Radio: 0.1, Learning rate: 0.1, loss option: 4, scale: 0 y método: cobyla
+Iter 175: Loss x 1e6 = 0.00, Params = [-0.85116514 -0.27601802  0.15662808 -2.04438127 -0.59183465 -0.06242435]
+Error máximo en V: 1.2068686783149194, Vreal/ Vcalc: [ 1.        +0.j         -2.45731137+4.7949026j   1.89802   +1.2758795j
+  1.43105917+0.08944916j]
+
+----------------------------------------
+Convergencia alcanzada usando cobyla.
+
+Radio: 0.1, Learning rate: 0.1, loss option: 4, scale: 0 y método: cobyla
+Iter 173: Loss x 1e6 = 0.02, Params = [-0.57230378  0.92531492 -0.64616477 -1.95277615 -0.70042833 -1.50082942]
+Error máximo en V: 1.2385425611956478, Vreal/ Vcalc: [ 1.        +0.j         -1.40675388+3.50191219j  0.79450563+0.66978481j
+  0.2370193 +3.38206183j]
+
+----------------------------------------
+Convergencia alcanzada usando cobyla.
+
+Radio: 0.1, Learning rate: 0.05, loss option: 4, scale: 0 y método: cobyla
+Iter 163: Loss x 1e6 = 0.02, Params = [-0.44203869  1.64170029 -0.77819575  1.42544978  0.85236761 -1.88485796]
+Error máximo en V: 1.1036810571884057, Vreal/ Vcalc: [ 1.        +0.j          0.46539074-3.1793592j   0.61674743-0.70542521j
+ -1.24029914+3.81851678j]
+
+----------------------------------------
+Convergencia alcanzada usando cobyla.
+
+Radio: 0.3, Learning rate: 0.05, loss option: 4, scale: 0 y método: cobyla
+Iter 164: Loss x 1e6 = 0.01, Params = [-2.02295155  0.84325862 -1.56456155 -1.98855194  0.27030639  2.40527425]
+Error máximo en V: 1.128932663841046, Vreal/ Vcalc: [ 1.         +0.j         -6.64176753+14.96287027j
+  1.02432302 -0.28382764j -7.25455015 -6.57524181j]
+
+----------------------------------------
+Convergencia alcanzada usando cobyla.
+
+Radio: 0.3, Learning rate: 0.05, loss option: 4, scale: 0 y método: cobyla
+Iter 155: Loss x 1e6 = 0.01, Params = [-1.1756585   2.56051208 -2.02887346  0.07326636  0.49834443  3.99681168]
+Error máximo en V: 0.9634584544602731, Vreal/ Vcalc: [ 1.         +0.j          8.00992815 -0.58791059j
+  0.79923751 -0.4349089j  -8.81342697+10.13884551j]
+
+----------------------------------------
+Convergencia alcanzada usando cobyla.
+
+Ansatz: amplitude, Radio: 0.1, Learning rate: 0.05, loss option: 1, scale: 1
+Iter 1000: Loss x 1e6 = 44.79, Params = [1.81916768 5.85823088 5.23180497]
+Error máximo en V: 0.013189078703284562, Vreal/ Vcalc: [1.         1.00279743 0.99085072 0.98555712]
+
+----------------------------------------
+Convergencia alcanzada usando cobyla.
+
+Ansatz: amplitude, Radio: 0.1, Learning rate: 0.05, loss option: 4, scale: 0
+Iter 1000: Loss x 1e6 = 3.18, Params = [1.57193197 5.76244201 4.81490999]
+Error máximo en V: 0.0005250676991661596, Vreal/ Vcalc: [1.         1.00000006 0.99973955 0.99941693]
+
+----------------------------------------
+Convergencia alcanzada usando basic.
+
+Ansatz: amplitude, Radio: 0.1, Learning rate: 0.05, loss option: 4, scale: 0
+Iter 1000: Loss x 1e6 = 34.56, Params = [1.67851339 5.75504468 4.64806906]
+Error máximo en V: 0.0005795875742564682, Vreal/ Vcalc: [1.         1.00052718 1.00041366 0.9997703 ]
 
 ----------------------------------------
