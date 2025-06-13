@@ -92,22 +92,21 @@ def ansatz_complex(params, wires):
         qml.Hadamard(wires=wire)
 
     param_idx = 0
-    for wire in wires:  # First RZ layer
+    for wire in wires:  # Primera capa RZ
         qml.RZ(params[param_idx], wires=wire)
         param_idx += 1
 
     for i in range(n_qubits_reg - 1):  # Entanglement
         qml.CNOT(wires=[wires[i], wires[i + 1]])
 
-    for wire in wires:  # Second RZ layer
+    for wire in wires:  # Segunda capa RZ
         qml.RZ(params[param_idx], wires=wire)
         param_idx += 1
 
 
 def circuit_complex_z(params, num_qubits):
-    # Applies the same complex Z ansatz structure to both registers
-    ansatz_complex(params, range(1, num_qubits + 1))  # Apply to first register
-    ansatz_complex(params, range(num_qubits + 1, 2 * num_qubits + 1))  # Apply to second register
+    ansatz_complex(params, range(1, num_qubits + 1))  # Aplica al primer registro
+    ansatz_complex(params, range(num_qubits + 1, 2 * num_qubits + 1))  # Aplica al segundo registro
 
 
 ansatz_library = {"amplitude": {"ansatz": ansatz, "circuit": circuit_amplitude}, "variational_block": {"circuit": circuit_variational},
@@ -156,113 +155,108 @@ def create_unitaries(Y, B):
 ## OPTIMIZACION (función principal)
 #####
 def quantum_optimization_simulation(num_qubits=2, ansatz_params=None, optimizer="basic", ansatz_name="amplitude"):
-    r"""Simulación cuántica usando PennyLane con distintos optimizadores y ansatz
-
-    Args:
-        num_qubits (int, opcional): Número de qubits para cada uno de los dos registros.
-        ansatz_params (list, opcional): Parámetros iniciales para el ansatz. MUST BE PROVIDED WITH CORRECT SIZE.
-        optimizer (str, opcional): Método de optimización a usar ('basic', 'sequential', 'cobyla' o 'adam').
-        ansatz_name (str, opcional): Nombre del ansatz a usar ('amplitude', 'variational_block', 'complex_z')
-    """
-    global learning_rate, loss_option, PEN_COEF_SCALE  # Added PEN_COEF_SCALE
+    r"""Simulación cuántica usando PennyLane con distintos optimizadores y ansatz"""
+    global learning_rate, loss_option, PEN_COEF_SCALE, radius
 
     if ansatz_params is None:
-        # Default initialization removed as size depends on ansatz_name
         raise ValueError("ansatz_params must be provided")
 
-    # Calcular B y su norma
     B = V * (Y @ V)
     B[0] = 0
-    B_norm = np.linalg.norm(B)  # Precalcular <B|B>
-
-    # Obtener las matrices unitarias a usar
+    B_norm = np.linalg.norm(B)
     Y_extended, U_b_dagger, Y_norm = create_unitaries(Y, B)
-
-    # Definir el dispositivo de PennyLane. Total de wires: 2*num_qubits + 1
     total_wires = 2 * num_qubits + 1
     dev = qml.device("default.qubit", wires=total_wires)
 
-    # Circuito qc1: Inicializa dos registros y aplica Y_extended y las compuertas CNOT.
+    # --- QNODE PARA OBTENER 'v' DE FORMA UNIFICADA ---
+    # Este circuito auxiliar se usa para obtener el vector 'v' de cualquier ansatz.
+    dev_v = qml.device("default.qubit", wires=num_qubits)
+
+    @qml.qnode(dev_v)
+    def get_v_qnode(params, option_ansatz):
+
+        if option_ansatz == 'amplitude':
+            v_temp = ansatz(params)
+            qml.AmplitudeEmbedding(v_temp, wires=range(num_qubits), normalize=False)
+        elif option_ansatz == 'complex_z':
+            # Pasamos solo los wires del primer registro
+            ansatz_complex(params, range(num_qubits))
+        elif option_ansatz == 'variational_block':
+            variational_block(params, num_qubits)
+
+        return qml.state()
+
+    # --- CIRCUITOS PRINCIPALES ---
     @qml.qnode(dev)
     def circuit1(params, option_ansatz):
-        """
-        QNode que inicializa el estado cuántico usando el ansatz seleccionado
-        """
-        circuit_f = ansatz_library.get(option_ansatz).get("circuit")
-        circuit_f(params, num_qubits)
+        # En lugar de llamar a circuit_f, usamos get_v_qnode para preparar ambos registros
+        # con el mismo estado base 'v'.
+        state_v = get_v_qnode(params, option_ansatz)
+        qml.StatePrep(state_v, wires=range(1, num_qubits + 1))
+        qml.StatePrep(state_v, wires=range(num_qubits + 1, 2 * num_qubits + 1))
 
-        # El wire extra (índice 0) se deja en el estado |0> # Corrected comment: wire 0 is ancilla
-        # Aplicar la operación Y_extended en wires [0, ..., num_qubits]
         qml.QubitUnitary(Y_extended, wires=range(num_qubits + 1))
-        # Aplicar compuertas CNOT: control en wire i+num_qubits y target en wire i
         for i in range(1, num_qubits + 1):
             qml.CNOT(wires=[i + num_qubits, i])
         return qml.state()
 
-    # Circuito qc2: Igual que qc1 pero extiende con U_b† en el segundo registro.
     @qml.qnode(dev)
     def circuit2(params, option_ansatz):
-        """QNode que extiende qc1 con U_b†."""
-        circuit_f = ansatz_library.get(option_ansatz).get("circuit")
-        circuit_f(params, num_qubits)
+        state_v = get_v_qnode(params, option_ansatz)
+        qml.StatePrep(state_v, wires=range(1, num_qubits + 1))
+        qml.StatePrep(state_v, wires=range(num_qubits + 1, 2 * num_qubits + 1))
 
-        # El wire extra (índice 0) se deja en el estado |0>
-        # Aplicar la operación Y_extended en wires [0, ..., num_qubits]
         qml.QubitUnitary(Y_extended, wires=range(num_qubits + 1))
-        # Aplicar compuertas CNOT: control en wire i+num_qubits y target en wire i
         for i in range(1, num_qubits + 1):
             qml.CNOT(wires=[i + num_qubits, i])
-        # Aplicar U_b† en el segundo registro
         qml.QubitUnitary(U_b_dagger, wires=range(num_qubits + 1, 2 * num_qubits + 1))
         return qml.state()
 
     def calculate_loss_with_simulation(params):
-        dim = 2 ** num_qubits
-        # Handle V_norm based on ansatz
-        if ansatz_name == "amplitude":
-            v = ansatz(params)  # Only calculate v for amplitude ansatz
-            if abs(v[0]) < 1e-9:  # Avoid division by zero
-                return 1e6  # Return a large loss if v[0] is too small
-            V_norm = 1 / v[0]  # Se asume que v[0] ≠ 0 (normalización en pu)
-        else:
-            V_norm = 1.0
+        try:
+            v = get_v_qnode(params, ansatz_name)
 
-        statevector1 = circuit1(params, ansatz_name)
-        statevector2 = circuit2(params, ansatz_name)
+            if abs(v[0]) < 1e-9:
+                return 1e6  # Evitar división por cero
+            V_norm = abs(1 / v[0])  # Usar valor absoluto para evitar números complejos
 
-        shots_array = np.abs(statevector1[1:dim]) ** 2
-        shots_total = np.sum(shots_array)
-        if shots_total < 1e-12: return 1e6  # Avoid division by zero / instability
-        norm_yv_cnot = np.sqrt(shots_total)
+            dim = 2 ** num_qubits
+            statevector1 = circuit1(params, ansatz_name)
+            statevector2 = circuit2(params, ansatz_name)
 
-        # Extract the coefficient in the position 0 (state |00...0>)
-        shots_array2 = np.abs(statevector2[0]) ** 2
-        shots_total2 = np.sum(shots_array2)
-        norm_after_ub = np.sqrt(shots_total2)
+            shots_array = np.abs(statevector1[1:dim]) ** 2
+            shots_total = np.sum(shots_array)
+            if shots_total < 1e-12:
+                return 1e6
+            norm_yv_cnot = np.sqrt(shots_total)
 
-        norm_YV_cnot = norm_yv_cnot * Y_norm * V_norm * V_norm
-        pen_coef = PEN_COEF_SCALE / B_norm ** 2
+            shots_array2 = np.abs(statevector2[0]) ** 2
+            norm_after_ub = np.sqrt(shots_array2)
 
-        losses = []
-        # Loss 0: Original form (potentially unstable if norm_yv_cnot is small)
-        losses.append(1 - (norm_after_ub) / norm_yv_cnot + pen_coef * (norm_YV_cnot - B_norm) ** 2)
-        # Loss 1: Squared ratio (more stable)
-        losses.append(1 - (norm_after_ub) ** 2 / norm_yv_cnot ** 2 + pen_coef * (norm_YV_cnot - B_norm) ** 2)
-        # Loss 2: Squared ratio + higher penalty power
-        losses.append(1 - (norm_after_ub) ** 2 / norm_yv_cnot ** 2 + pen_coef * (norm_YV_cnot - B_norm) ** 4)
-        # Loss 3, 4: Alternative forms (check original source for derivation)
-        a2 = norm_YV_cnot ** 2
-        b2 = B_norm ** 2
-        # ab calculation depends heavily on V_norm interpretation. Using placeholder V_norm=1 for non-amplitude.
-        ab = norm_after_ub * Y_norm * B_norm * V_norm * V_norm
-        losses.append((a2 - ab) ** 2 + (b2 - ab) ** 2)  # Loss 3
-        losses.append(a2 + b2 - 2 * ab)
+            norm_YV_cnot = norm_yv_cnot * Y_norm * V_norm * V_norm
+            pen_coef = PEN_COEF_SCALE / B_norm ** 2
 
-        # Ensure loss is real
-        selected_loss = np.real(losses[loss_option])
-        if np.isnan(selected_loss): return 1e6  # Return large loss if NaN occurs
+            a2 = norm_YV_cnot ** 2
+            b2 = B_norm ** 2
+            ab = norm_after_ub * Y_norm * B_norm * V_norm * V_norm
+            loss = a2 + b2 - 2 * ab
 
-        return selected_loss
+            selected_loss = np.real(loss)
+
+            # Verificaciones adicionales para evitar valores problemáticos
+            if np.isnan(selected_loss) or np.isinf(selected_loss):
+                return 1e6
+
+            # Si la pérdida es negativa muy grande, hay un problema numérico
+            if selected_loss < -1e6:
+                print(f"Warning: Large negative loss detected: {selected_loss}")
+                return 1e6
+
+            return max(selected_loss, 0)  # Asegurar que la pérdida no sea negativa
+
+        except Exception as e:
+            print(f"Error in loss calculation: {e}")
+            return 1e6
 
     def finite_difference_gradient(params, delta=1e-4):
         grad = np.zeros_like(params, dtype=float)  # Ensure float type
@@ -414,31 +408,23 @@ def quantum_optimization_simulation(num_qubits=2, ansatz_params=None, optimizer=
     else:
         raise ValueError(f"Optimizer '{optimizer}' no reconocido. Use 'basic', 'cobyla', 'sequential' o 'adam'.")
 
-    # Resultados finales
     final_params = current_params
 
-    if ansatz_name == "amplitude":
-        v = ansatz(final_params)
-        if abs(v[0]) < 1e-9:
-            print("Error: v[0] is near zero, cannot calculate Vsol.")
-            Vsol = [np.nan] * len(V)  # Indicate error
-            max_err_V = np.inf
-        else:
-            v0 = v[0]
-            Vsol = [x / v0 for x in v]
-            err_V = np.abs(V - np.array(Vsol))
-            max_err_V = np.max(err_V)
+    # Obtenemos el vector 'v' final con los parámetros optimizados
+    v_final = get_v_qnode(final_params, ansatz_name)
+
+    if abs(v_final[0]) < 1e-9:
+        print("Error: v[0] del resultado final es casi cero.")
+        Vsol, max_err_V = ([np.nan] * len(V)), np.inf
     else:
-        Vsol = ["N/A (Variational)"] * len(V)
-        max_err_V = np.nan
-        print(f"Final parameters for {ansatz_name}: {final_params}")
+        v0 = v_final[0]
+        Vsol = v_final / v0
+        err_V = np.abs(V - Vsol)
+        max_err_V = np.max(err_V)
 
     print(f"Iter {iter_count}: Loss x 1e6 = {loss * 1e6:.2f}")
-    if ansatz_name == "amplitude":
-        print(f"Params = {final_params}")
-        print(f"Error máximo en V: {max_err_V}, Vreal/ Vcalc: {V / np.array(Vsol)}")
-    else:
-        print(f"Final loss achieved for variational ansatz {ansatz_name}.")
+    print(f"Params = {final_params}")
+    print(f"Error máximo en V: {max_err_V:.6f}, Vreal/Vcalc: {V / Vsol}")
 
     if (anotarConvergencia and loss != -100 and loss <= anotarConvergenciaTolerance):
         with open("parametrosConvergencia.txt", "a") as f:
@@ -456,7 +442,7 @@ def quantum_optimization_simulation(num_qubits=2, ansatz_params=None, optimizer=
 if __name__ == "__main__":
     from time import time
 
-    global radius, learning_rate, loss_option, scale, PEN_COEF_SCALE  # Make params global for ansatz/loss access if needed
+    global radius, learning_rate, loss_option, scale, PEN_COEF_SCALE
 
     num_qubits_main = 2
 
