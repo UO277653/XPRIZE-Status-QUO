@@ -147,3 +147,32 @@ Iter 1000: Loss x 1e6 = 34.56, Params = [1.67851339 5.75504468 4.64806906]
 Error máximo en V: 0.0005795875742564682, Vreal/ Vcalc: [1.         1.00052718 1.00041366 0.9997703 ]
 
 ----------------------------------------
+Converged using cobyla for ansatz amplitude.
+Radius: 0.1, LR: 0.05, LossOpt: 4, PEN_COEF_SCALE_FACTOR: 0
+Iter 1000: Loss x 1e6 = 1.66
+Final Params (first 5 of 3): [ 1.57122002 -0.5215318  -1.4836293 ]
+Target V: [1.   1.1  0.95 0.9 ]
+Calc. Vsol (Re): [1.         1.09999999 0.95017911 0.90037966]
+Calc. Vsol (Im): [0. 0. 0. 0.]
+Max error in V: 3.797e-04
+V_target / V_calc ratio (Re): [1.         1.00000001 0.9998115  0.99957833]
+V_target / V_calc ratio (Im): [0. 0. 0. 0.]
+----------------------------------------
+Converged using adam for ansatz amplitude.
+Radius: 0.1, LR: 0.05, LossOpt: 4, PEN_COEF_SCALE_FACTOR: 0
+Iter 1000: Loss x 1e6 = 2.49
+Final Params (first 5 of 3): [ 1.5114783 -0.5253021 -1.5696131]
+Target V: [1.   1.1  0.95 0.9 ]
+Calc. Vsol (Re): [1.         1.09982412 0.94985256 0.90000007]
+Calc. Vsol (Im): [0. 0. 0. 0.]
+Max error in V: 1.759e-04
+V_target / V_calc ratio (Re): [1.         1.00015992 1.00015522 0.99999992]
+V_target / V_calc ratio (Im): [0. 0. 0. 0.]
+----------------------------------------
+Convergencia alcanzada usando cobyla.
+
+Ansatz: complex_z, Radio: 0.1, Learning rate: 0.05, loss option: 4, scale: 0
+Iter 714: Loss x 1e6 = -829560616.88, Params = [1.90917584 0.36416956 5.02859477 3.67895871]
+Variational ansatz used, Vsol/Error not directly comparable.
+
+----------------------------------------
