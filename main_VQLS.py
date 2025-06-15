@@ -25,11 +25,15 @@ rng_seed = 0  # Seed for random number generator
 # Coefficients of the linear combination A = c_0 A_0 + c_1 A_1 ...
 c = np.array([1.0, 0.2, 0.2])
 
+# Define the b vector - you can change this to any normalized vector
+b = np.array([0, 0, 0, 0, 0, 0, 0, 1], dtype=float)
+b = b / np.linalg.norm(b)  # Normalize b
+
 
 def U_b():
     """Unitary matrix rotating the ground state to the problem vector |b> = U_b |0>."""
-    for idx in range(n_qubits):
-        qml.Hadamard(wires=idx)
+    # Use state preparation to create the quantum state corresponding to vector b
+    qml.StatePrep(b, wires=range(n_qubits))
 
 
 def CA(idx):
@@ -85,8 +89,7 @@ def local_hadamard_test(weights, l=None, lp=None, j=None, part=None):
     CA(l)
 
     # Adjoint of the unitary U_b associated to the problem vector |b>.
-    # In this specific example Adjoint(U_b) = U_b.
-    U_b()
+    qml.adjoint(U_b)()
 
     # Controlled Z operator at position j. If j = -1, apply the identity.
     if j != -1:
@@ -133,7 +136,6 @@ def psi_norm(weights):
 def cost_loc(weights):
     """Local version of the cost function. Tends to zero when A|x> is proportional to |b>."""
     mu_sum = 0.0
-
     for l in range(0, len(c)):
         for lp in range(0, len(c)):
             for j in range(0, n_qubits):
@@ -179,7 +181,6 @@ A_1 = np.kron(np.kron(X, Z), Id)
 A_2 = np.kron(np.kron(X, Id), Id)
 
 A_num = c[0] * A_0 + c[1] * A_1 + c[2] * A_2
-b = np.ones(8) / np.sqrt(8)
 
 print("A = \n", A_num)
 print("b = \n", b)
@@ -213,10 +214,9 @@ samples = []
 for sam in raw_samples:
     samples.append(int("".join(str(bs) for bs in sam), base=2))
 
-q_probs = np.bincount(samples) / n_shots
+q_probs = np.bincount(samples, minlength=2 ** n_qubits) / n_shots
 
 print("x_n^2 =\n", c_probs)
-
 print("|<x|n>|^2=\n", q_probs)
 
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(7, 4))
