@@ -19,20 +19,23 @@ q_delta = 0.001  # Initial spread of random quantum weights
 rng_seed = 0  # Seed for random number generator
 
 #
-# Circuits of the quantum linear problem
+# Parameterizable problem definition
 #
 
-# Coefficients of the linear combination A = c_0 A_0 + c_1 A_1 ...
-c = np.array([1.0, 0.2, 0.2])
+# Coefficients of the linear combination A = c_0 A_0 + c_1 A_1 + c_2 A_2
+c = np.array([1.0, 0.2, 0.2])  # Modificable
 
-# Define the b vector - you can change this to any normalized vector
-b = np.array([0, 0, 0, 0, 0, 0, 0, 1], dtype=float)
+# Problem vector b - Modificable
+b = np.array([1, 0, 0, 0, 0, 0, 0, 0], dtype=float)
 b = b / np.linalg.norm(b)  # Normalize b
 
 
+#
+# Circuits of the quantum linear problem
+#
+
 def U_b():
     """Unitary matrix rotating the ground state to the problem vector |b> = U_b |0>."""
-    # Use state preparation to create the quantum state corresponding to vector b
     qml.StatePrep(b, wires=range(n_qubits))
 
 
@@ -99,7 +102,6 @@ def local_hadamard_test(weights, l=None, lp=None, j=None, part=None):
     U_b()
 
     # Controlled application of Adjoint(A_lp).
-    # In this specific example Adjoint(A_lp) = A_lp.
     CA(lp)
 
     # Second Hadamard gate applied to the ancillary qubit.
@@ -111,10 +113,8 @@ def local_hadamard_test(weights, l=None, lp=None, j=None, part=None):
 
 def mu(weights, l=None, lp=None, j=None):
     """Generates the coefficients to compute the "local" cost function C_L."""
-
     mu_real = local_hadamard_test(weights, l=l, lp=lp, j=j, part="Re")
     mu_imag = local_hadamard_test(weights, l=l, lp=lp, j=j, part="Im")
-
     return mu_real + 1.0j * mu_imag
 
 
@@ -125,11 +125,9 @@ def mu(weights, l=None, lp=None, j=None):
 def psi_norm(weights):
     """Returns the normalization constant <psi|psi>, where |psi> = A |x>."""
     norm = 0.0
-
     for l in range(0, len(c)):
         for lp in range(0, len(c)):
             norm = norm + c[l] * np.conj(c[lp]) * mu(weights, l, lp, -1)
-
     return abs(norm)
 
 
@@ -140,9 +138,7 @@ def cost_loc(weights):
         for lp in range(0, len(c)):
             for j in range(0, n_qubits):
                 mu_sum = mu_sum + c[l] * np.conj(c[lp]) * mu(weights, l, lp, j)
-
     mu_sum = abs(mu_sum)
-
     # Cost function C_L
     return 0.5 - 0.5 * mu_sum / (n_qubits * psi_norm(weights))
 
@@ -171,7 +167,7 @@ plt.show()
 # Comparison of quantum and classical results
 #
 
-# Classical algorithm
+# Classical algorithm - construct A matrix from coefficients
 Id = np.identity(2)
 Z = np.array([[1, 0], [0, -1]])
 X = np.array([[0, 1], [1, 0]])
@@ -200,10 +196,6 @@ dev_x = qml.device("lightning.qubit", wires=n_qubits, shots=n_shots)
 def prepare_and_sample(weights):
     # Variational circuit generating a guess for the solution vector |x>
     variational_block(weights)
-
-    # We assume that the system is measured in the computational basis.
-    # then sampling the device will give us a value of 0 or 1 for each qubit (n_qubits)
-    # this will be repeated for the total number of shots provided (n_shots)
     return qml.sample()
 
 
