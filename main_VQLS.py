@@ -117,7 +117,7 @@ def variational_block(weights):
 # Hadamard test
 #
 
-dev_mu = qml.device("lightning.qubit", wires=tot_qubits)
+dev_mu = qml.device("lightning.qubit", wires=tot_qubits, shots=None)
 
 
 @qml.qnode(dev_mu, interface="autograd")
@@ -260,28 +260,16 @@ c_probs = (x_classical / np.linalg.norm(x_classical)) ** 2
 # Preparation of the quantum solution
 #
 print("Preparing quantum solution...")
-dev_x = qml.device("lightning.qubit", wires=n_qubits, shots=n_shots)
+dev_x = qml.device("lightning.qubit", wires=n_qubits, shots=None)
 
 
 @qml.qnode(dev_x, interface="autograd")
 def prepare_and_sample(weights):
-    # Variational circuit generating a guess for the solution vector |x>
     variational_block(weights)
-
-    # We assume that the system is measured in the computational basis.
-    # then sampling the device will give us a value of 0 or 1 for each qubit (n_qubits)
-    # this will be repeated for the total number of shots provided (n_shots)
-    return qml.sample()
+    return qml.probs(wires=range(n_qubits))
 
 
-raw_samples = prepare_and_sample(w)
-
-# convert the raw samples (bit strings) into integers and count them
-samples = []
-for sam in raw_samples:
-    samples.append(int("".join(str(bs) for bs in sam), base=2))
-
-q_probs = np.bincount(samples, minlength=2 ** n_qubits) / n_shots
+q_probs = prepare_and_sample(w)
 
 print("\nRESULTS:")
 print("-" * 30)
@@ -297,8 +285,8 @@ for i, prob in enumerate(q_probs):
 diff = np.abs(c_probs - q_probs)
 max_diff = np.max(diff)
 mean_diff = np.mean(diff)
-mse = np.mean(diff ** 2)  # Mean squared error
-fidelity = np.sum(np.sqrt(c_probs * q_probs))  # Quantum fidelity
+mse = np.mean(diff ** 2)
+fidelity = np.sum(np.sqrt(c_probs * q_probs))
 
 print(f"\nDifference analysis:")
 print(f"  Maximum difference: {max_diff:.6f}")
