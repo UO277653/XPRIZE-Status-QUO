@@ -79,19 +79,18 @@ def variational_block(weights):
 
 def ansatz_complex(params, wires):
     n = len(wires)
-    assert len(params) == 2 * n  # un θ_Y por qubit y un φ_Z por qubit
+    assert len(params) == 3 * n  # ahora necesitarás 3 parámetros por qubit
 
-    # capa de RY
-    for i, w in enumerate(wires):
-        qml.RY(params[i], wires=w)
-
-    # capa de entanglement
+    idx = 0
+    for w in wires:
+        qml.Hadamard(wires=w)
+    # una capa entera de Rot:
+    for w in wires:
+        theta, phi, lam = params[idx], params[idx + 1], params[idx + 2]
+        qml.Rot(theta, phi, lam, wires=w)
+        idx += 3
     for i in range(n - 1):
-        qml.CNOT(wires=[wires[i], wires[i + 1]])
-
-    # capa de RZ (fases)
-    for i, w in enumerate(wires):
-        qml.RZ(params[n + i], wires=w)
+        qml.CNOT(wires=[wires[i], wires[i + 1]])  # podrías repetir Rot otra vez si quieres dos capas
 
 
 def variational_block_complex(weights):
@@ -181,7 +180,7 @@ def psi_norm(weights):
 
 print("Starting quantum optimization...")
 np.random.seed(rng_seed)
-n_params = 2 * n_qubits
+n_params = 3 * n_qubits
 w = q_delta * np.random.randn(n_params, requires_grad=True)
 
 # --- Elegimos el optimizador y la función de coste a usar ---
