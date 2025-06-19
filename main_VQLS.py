@@ -13,9 +13,10 @@ n_qubits = 3  # Number of system qubits.
 tot_qubits = n_qubits + 1  # Addition of an ancillary qubit.
 ancilla_idx = n_qubits  # Index of the ancillary qubit (last position).
 steps = 100  # Number of optimization steps
-eta = 0.4  # Learning rate
+eta = 0.8  # Learning rate
 q_delta = 0.01  # Initial spread of random quantum weights
 rng_seed = 0  # Seed for random number generator
+n_layers = 2
 
 # --------------------------------------------------------------------------
 # --- NUEVA OPTIMIZACIÓN DE VELOCIDAD ---
@@ -48,12 +49,16 @@ def construct_matrix_A(coefficients):
 
 
 c = np.array([1.0, 0.5, 0.3])
-b = np.array([1, 0, 0, 0, 0, 0, 0, 0], dtype=float)
-b = b / np.linalg.norm(b)
+
+# Ejemplo de b complejo
+raw_b = np.array([1 + 1j, 0, 1 - 1j, 0, 0, 0, 0, 0], dtype=complex)
+b = raw_b / np.linalg.norm(raw_b)
 A_matrix = construct_matrix_A(c)
 
 
-def U_b(): qml.StatePrep(b, wires=range(n_qubits))
+def U_b():
+    """Prepara el estado |b> con amplitudes complejas."""
+    qml.MottonenStatePreparation(b, wires=range(n_qubits))
 
 
 def CA(idx):
@@ -66,11 +71,32 @@ def CA(idx):
 
 def variational_block(weights):
     for i in range(n_qubits): qml.Hadamard(wires=i)
-    for i, w in enumerate(weights[:n_qubits]): qml.RY(w, wires=i)
     for i in range(n_qubits - 1): qml.CNOT(wires=[i, i + 1])
     if len(weights) > n_qubits:
         for i in range(n_qubits):
             if i + n_qubits < len(weights): qml.RY(weights[i + n_qubits], wires=i)
+
+
+def ansatz_complex(params, wires):
+    n = len(wires)
+    assert len(params) == 2 * n  # un θ_Y por qubit y un φ_Z por qubit
+
+    # capa de RY
+    for i, w in enumerate(wires):
+        qml.RY(params[i], wires=w)
+
+    # capa de entanglement
+    for i in range(n - 1):
+        qml.CNOT(wires=[wires[i], wires[i + 1]])
+
+    # capa de RZ (fases)
+    for i, w in enumerate(wires):
+        qml.RZ(params[n + i], wires=w)
+
+
+def variational_block_complex(weights):
+    # Asumimos que tu VQLS usa n_qubits global
+    ansatz_complex(weights, wires=list(range(n_qubits)))
 
 
 #
@@ -84,7 +110,7 @@ dev_cost = qml.device("lightning.qubit", wires=tot_qubits)
 def local_hadamard_test(weights, l, lp, j, part):
     qml.Hadamard(wires=ancilla_idx)
     if part == "Im": qml.PhaseShift(-np.pi / 2, wires=ancilla_idx)
-    variational_block(weights)
+    variational_block_complex(weights)
     CA(l)
     qml.adjoint(U_b)()
     if j != -1: qml.CZ(wires=[ancilla_idx, j])
@@ -115,7 +141,7 @@ def cost_loc(weights):
 def global_hadamard_test(weights, l, part):
     qml.Hadamard(wires=ancilla_idx)
     if part == "Im": qml.PhaseShift(-np.pi / 2, wires=ancilla_idx)
-    variational_block(weights)
+    variational_block_complex(weights)
     CA(l)
     qml.adjoint(U_b)()
     qml.Hadamard(wires=ancilla_idx)
@@ -209,7 +235,7 @@ if MODO_ANALITICO:
 
     @qml.qnode(dev_x)
     def get_solution_statevector(weights):
-        variational_block(weights)
+        variational_block_complex(weights)
         return qml.state()
 
 
@@ -222,7 +248,7 @@ else:
 
     @qml.qnode(dev_x)
     def prepare_and_sample(weights):
-        variational_block(weights)
+        variational_block_complex(weights)
         return qml.sample()
 
 
