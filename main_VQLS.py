@@ -98,6 +98,23 @@ def variational_block_complex(weights):
     ansatz_complex(weights, wires=list(range(n_qubits)))
 
 
+# Diccionario de optimizadores disponibles
+optimizers = {"adam": lambda lr: qml.AdamOptimizer(stepsize=lr), "sgd": lambda lr: qml.GradientDescentOptimizer(stepsize=lr),
+              "rmsprop": lambda lr: qml.RMSPropOptimizer(stepsize=lr), "nesterov": lambda lr: qml.NesterovMomentumOptimizer(stepsize=lr),
+              "adagrad": lambda lr: qml.AdagradOptimizer(stepsize=lr), "momentum": lambda lr: qml.MomentumOptimizer(stepsize=lr)}
+
+# Diccionario de bloques variacionales
+ansatzes = {"default": variational_block, "complex": variational_block_complex, }
+
+# Selección flexible
+optimizer_name = "adam"
+opt = optimizers[optimizer_name](eta)
+print(f"Using optimizer: {optimizer_name}")
+
+ansatz_name = "complex"
+variational_block_fn = ansatzes[ansatz_name]
+print(f"Using ansatz: {ansatz_name}")
+
 #
 # Definiciones para las funciones de coste (Local y Global)
 #
@@ -109,7 +126,7 @@ dev_cost = qml.device("lightning.qubit", wires=tot_qubits)
 def local_hadamard_test(weights, l, lp, j, part):
     qml.Hadamard(wires=ancilla_idx)
     if part == "Im": qml.PhaseShift(-np.pi / 2, wires=ancilla_idx)
-    variational_block_complex(weights)
+    variational_block_fn(weights)
     CA(l)
     qml.adjoint(U_b)()
     if j != -1: qml.CZ(wires=[ancilla_idx, j])
@@ -140,7 +157,7 @@ def cost_loc(weights):
 def global_hadamard_test(weights, l, part):
     qml.Hadamard(wires=ancilla_idx)
     if part == "Im": qml.PhaseShift(-np.pi / 2, wires=ancilla_idx)
-    variational_block_complex(weights)
+    variational_block_fn(weights)
     CA(l)
     qml.adjoint(U_b)()
     qml.Hadamard(wires=ancilla_idx)
@@ -234,7 +251,7 @@ if MODO_ANALITICO:
 
     @qml.qnode(dev_x)
     def get_solution_statevector(weights):
-        variational_block_complex(weights)
+        variational_block_fn(weights)
         return qml.state()
 
 
@@ -247,7 +264,7 @@ else:
 
     @qml.qnode(dev_x)
     def prepare_and_sample(weights):
-        variational_block_complex(weights)
+        variational_block_fn(weights)
         return qml.sample()
 
 
@@ -276,3 +293,50 @@ ax2.set_title("Quantum Probabilities")
 ax2.set_xlabel("Basis states")
 plt.tight_layout()
 plt.show()
+
+results = {"optimizer": optimizer_name, "ansatz": ansatz_name, "coefficients": c.tolist(), "b_vector": b.tolist(), "final_cost": final_cost,
+           "cost_history": cost_history}
+
+# Guardar resultados en formato JSON
+import json
+import os
+from datetime import datetime
+
+import json
+import os
+from datetime import datetime
+
+# Agregar timestamp para identificar cada experimento
+timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+results["timestamp"] = timestamp
+
+filename = "vqls_results.json"
+
+
+# Helper to convert complex numbers
+def convert_complex(obj):
+    if isinstance(obj, complex):
+        return obj.real  # or str(obj) if you want to keep both parts
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    return obj
+
+
+# Leer experimentos existentes (si existen)
+all_experiments = []
+if os.path.exists(filename):
+    try:
+        with open(filename, "r") as f:
+            all_experiments = json.load(f)
+    except (json.JSONDecodeError, FileNotFoundError):
+        all_experiments = []
+
+# Agregar el nuevo experimento
+results["experiment_id"] = len(all_experiments) + 1
+all_experiments.append(results)
+
+# Guardar todos los experimentos
+with open(filename, "w") as f:
+    json.dump(all_experiments, f, indent=2, default=convert_complex)
+
+print(f"Resultados añadidos a: {filename} (Experimento #{results['experiment_id']})")
