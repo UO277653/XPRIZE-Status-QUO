@@ -22,22 +22,25 @@ rng_seed = 2  # Seed for random number generator
 n_layers = 2
 
 # --------------------------------------------------------------------------
-# True: Usa la función de coste "Global". Es mucho más rápida (menos simulaciones por paso).
-# False: Usa la función de coste "Local" original (muy lenta pero teóricamente robusta).
-USAR_COSTE_GLOBAL = False  # Cambiado a True por defecto para rapidez
+# Configuración de costes y convergencia - CRITERIOS MÁS REALISTAS
+USAR_COSTE_GLOBAL = False  # False usa función local (más robusta)
+CONVERGENCE_THRESHOLD = 1e-6  # Umbral para considerar convergencia
+MIN_FIDELITY = 0.7  # Fidelidad mínima aceptable (más realista)
+MAX_RESIDUAL = 1.0  # Error residual máximo aceptable (más permisivo)
+PATIENCE = 150  # Pasos sin mejora antes de parar
 # --------------------------------------------------------------------------
 
-# Opción para modo analítico/muestreo en el resultado final (ya implementada)
+# Opción para modo analítico/muestreo en el resultado final
 MODO_ANALITICO = True
 n_shots = 10 ** 6
 
-# NUEVO: Configuración para múltiples experimentos
-MULTIPLE_RUNS = False  # Para probar múltiples configuraciones
-N_RANDOM_SEEDS = 3  # Número de semillas aleatorias por configuración
+# Configuración para múltiples experimentos
+MULTIPLE_RUNS = False
+N_RANDOM_SEEDS = 3
 
 
 #
-# Definiciones (Matrices, U_b, CA, variational_block) - Sin cambios
+# Definiciones matrices y funciones base
 #
 def get_base_matrices():
     Id = np.identity(2)
@@ -90,19 +93,17 @@ def variational_block(weights):
 def ansatz_complex(params, wires):
     """Ansatz más expresivo para números complejos."""
     n = len(wires)
-    assert len(params) == 3 * n  # 3 parámetros por qubit
+    assert len(params) == 3 * n
 
     idx = 0
     for w in wires:
         qml.Hadamard(wires=w)
 
-    # Una capa entera de rotaciones Rot (más expresivo que solo RY)
     for w in wires:
         theta, phi, lam = params[idx], params[idx + 1], params[idx + 2]
         qml.Rot(theta, phi, lam, wires=w)
         idx += 3
 
-    # Entanglement
     for i in range(n - 1):
         qml.CNOT(wires=[wires[i], wires[i + 1]])
 
@@ -120,19 +121,15 @@ def ansatz_layered(params, wires, n_layers=2):
 
     idx = 0
     for layer in range(n_layers):
-        # Capa de rotaciones
         for w in wires:
             theta, phi, lam = params[idx], params[idx + 1], params[idx + 2]
             qml.Rot(theta, phi, lam, wires=w)
             idx += 3
 
-        # Capa de entanglement (varía según la capa)
         if layer % 2 == 0:
-            # Entanglement lineal
             for i in range(n - 1):
                 qml.CNOT(wires=[wires[i], wires[i + 1]])
         else:
-            # Entanglement circular
             for i in range(n):
                 qml.CNOT(wires=[wires[i], wires[(i + 1) % n]])
 
@@ -145,19 +142,16 @@ def variational_block_layered(weights):
 def ansatz_hardware_efficient(params, wires):
     """Ansatz eficiente para hardware cuántico real."""
     n = len(wires)
-    assert len(params) == 2 * n  # 2 parámetros por qubit
+    assert len(params) == 2 * n
 
     idx = 0
-    # Capa inicial de RY
     for w in wires:
         qml.RY(params[idx], wires=w)
         idx += 1
 
-    # Entanglement
     for i in range(n - 1):
         qml.CNOT(wires=[wires[i], wires[i + 1]])
 
-    # Segunda capa de RY
     for w in wires:
         qml.RY(params[idx], wires=w)
         idx += 1
@@ -168,25 +162,22 @@ def variational_block_hardware_efficient(weights):
     ansatz_hardware_efficient(weights, wires=list(range(n_qubits)))
 
 
-# Diccionario de optimizadores disponibles (ampliado)
+# Diccionarios de optimizadores y ansätze
 optimizers = {"adam": lambda lr: qml.AdamOptimizer(stepsize=lr), "sgd": lambda lr: qml.GradientDescentOptimizer(stepsize=lr),
               "rmsprop": lambda lr: qml.RMSPropOptimizer(stepsize=lr), "nesterov": lambda lr: qml.NesterovMomentumOptimizer(stepsize=lr),
               "adagrad": lambda lr: qml.AdagradOptimizer(stepsize=lr), "momentum": lambda lr: qml.MomentumOptimizer(stepsize=lr),
-              "spsa": lambda lr: qml.SPSAOptimizer(maxiter=steps, blocking=False)  # Para ruido
-              }
+              "spsa": lambda lr: qml.SPSAOptimizer(maxiter=steps, blocking=False)}
 
-# Diccionario de bloques variacionales (ampliado)
-ansatzes = {"default": (variational_block, lambda: 2 * n_qubits),  # (función, parámetros)
-            "complex": (variational_block_complex, lambda: 3 * n_qubits), "layered": (variational_block_layered, lambda: 3 * n_qubits * n_layers),
+ansatzes = {"default": (variational_block, lambda: 2 * n_qubits), "complex": (variational_block_complex, lambda: 3 * n_qubits),
+            "layered": (variational_block_layered, lambda: 3 * n_qubits * n_layers),
             "hardware_efficient": (variational_block_hardware_efficient, lambda: 2 * n_qubits), }
 
 #
-# Definiciones para las funciones de coste (Local y Global)
+# Definiciones para las funciones de coste
 #
 dev_cost = qml.device("lightning.qubit", wires=tot_qubits)
 
 
-# --- Subrutinas para el Coste LOCAL (original) ---
 @qml.qnode(dev_cost, interface="autograd")
 def local_hadamard_test(weights, l, lp, j, part, variational_block_fn):
     qml.Hadamard(wires=ancilla_idx)
@@ -219,7 +210,6 @@ def cost_loc(weights, variational_block_fn=variational_block):
     return 0.5 - 0.5 * abs(mu_sum) / (n_qubits * norm)
 
 
-# --- Subrutinas para el Coste GLOBAL (NUEVO y RÁPIDO) ---
 @qml.qnode(dev_cost, interface="autograd")
 def global_hadamard_test(weights, l, part, variational_block_fn):
     qml.Hadamard(wires=ancilla_idx)
@@ -234,7 +224,6 @@ def global_hadamard_test(weights, l, part, variational_block_fn):
 
 def cost_glob(weights, variational_block_fn=variational_block):
     """Función de coste global, computacionalmente más barata."""
-    # 1. Calcular el numerador: |<b|A|x>|^2
     bAx_overlap = 0.0
     for l in range(len(c)):
         real = global_hadamard_test(weights, l, "Re", variational_block_fn)
@@ -242,16 +231,12 @@ def cost_glob(weights, variational_block_fn=variational_block):
         bAx_overlap += c[l] * (real + 1.0j * imag)
 
     numerator = np.abs(bAx_overlap) ** 2
-
-    # 2. Calcular el denominador: <x|A†A|x>
     denominator = psi_norm(weights, variational_block_fn)
-
     return 1 - (numerator / denominator)
 
 
-# --- Función compartida por ambas funciones de coste ---
 def psi_norm(weights, variational_block_fn=variational_block):
-    """Calcula <x|A†A|x>. Es necesario para ambas funciones de coste."""
+    """Calcula <x|A†A|x>."""
     norm = 0.0
     for l in range(len(c)):
         for lp in range(len(c)):
@@ -259,8 +244,67 @@ def psi_norm(weights, variational_block_fn=variational_block):
     return abs(norm)
 
 
-def run_single_optimization(optimizer_name, ansatz_name, seed, learning_rate=eta):
-    """Ejecuta una optimización individual."""
+def calculate_solution_quality(weights, variational_block_fn):
+    """
+    Calcula métricas de calidad de la solución cuántica.
+    """
+    # Obtener vector de estado cuántico
+    dev_x = qml.device("lightning.qubit", wires=n_qubits)
+
+    @qml.qnode(dev_x)
+    def get_quantum_state(w):
+        variational_block_fn(w)
+        return qml.state()
+
+    quantum_state = get_quantum_state(weights)
+    q_probs = np.abs(quantum_state) ** 2
+
+    # Solución clásica
+    A_inv = np.linalg.pinv(A_matrix)
+    x_classical = np.dot(A_inv, b)
+    x_classical_normalized = x_classical / np.linalg.norm(x_classical)
+    c_probs = np.abs(x_classical_normalized) ** 2
+
+    # Métricas de calidad
+    fidelity = np.sum(np.sqrt(c_probs * q_probs))
+
+    # Error residual: ||Ax - b||
+    quantum_amplitudes = quantum_state / np.linalg.norm(quantum_state)
+    residual_error = np.linalg.norm(A_matrix @ quantum_amplitudes - b)
+
+    # Distancia L2 entre distribuciones de probabilidad
+    prob_distance = np.linalg.norm(c_probs - q_probs)
+
+    return {'fidelity': float(fidelity), 'residual_error': float(residual_error), 'prob_distance': float(prob_distance), 'classical_probs': c_probs,
+            'quantum_probs': q_probs}
+
+
+def check_convergence(cost_history, patience=PATIENCE, threshold=CONVERGENCE_THRESHOLD):
+    """
+    Verifica si el algoritmo ha convergido.
+    """
+    if len(cost_history) < patience:
+        return False, "Not enough steps"
+
+    recent_costs = cost_history[-patience:]
+    cost_variance = np.var(recent_costs)
+    cost_improvement = recent_costs[0] - recent_costs[-1]
+
+    converged = cost_variance < threshold and cost_improvement < threshold
+
+    reason = ""
+    if converged:
+        reason = f"Converged: variance={cost_variance:.2e}, improvement={cost_improvement:.2e}"
+    else:
+        reason = f"Not converged: variance={cost_variance:.2e}, improvement={cost_improvement:.2e}"
+
+    return converged, reason
+
+
+def run_single_optimization_improved(optimizer_name, ansatz_name, seed, learning_rate=eta):
+    """
+    Ejecuta una optimización individual con verificación de convergencia.
+    """
     print(f"\n--- Running: {optimizer_name} + {ansatz_name} (seed={seed}) ---")
 
     # Configurar optimizador
@@ -285,116 +329,179 @@ def run_single_optimization(optimizer_name, ansatz_name, seed, learning_rate=eta
         cost_function = lambda weights: cost_loc(weights, variational_block_fn)
         cost_name = "Local"
 
-    # Optimización
+    print(f"Using {cost_name} cost function")
+
+    # Optimización con verificación de convergencia
     cost_history = []
+    quality_history = []
+    best_cost = float('inf')
+    best_weights = w.copy()
+    no_improvement_count = 0
+
     for it in range(steps):
         if optimizer_name == "spsa":
-            # SPSA tiene una interfaz ligeramente diferente
             w = opt.step(cost_function, w)
             cost = cost_function(w)
         else:
             w, cost = opt.step_and_cost(cost_function, w)
 
-        cost_history.append(float(cost))  # Asegurar que es float
+        cost_history.append(float(cost))
 
-        if it % 20 == 0 or it < 5:
-            print(f"  Step {it:3d}: Cost = {cost:9.20f}")
+        # Trackear mejor solución
+        if cost < best_cost:
+            best_cost = cost
+            best_weights = w.copy()
+            no_improvement_count = 0
+        else:
+            no_improvement_count += 1
 
-    final_cost = cost_history[-1]
-    print(f"  Final cost: {final_cost:.20f}")
+        # Evaluar calidad cada 50 pasos
+        if it % 50 == 0:
+            try:
+                quality = calculate_solution_quality(w, variational_block_fn)
+                quality_history.append({'step': it, 'cost': cost, 'fidelity': quality['fidelity'], 'residual_error': quality['residual_error'],
+                                        'prob_distance': quality['prob_distance']})
 
-    return {"optimizer": optimizer_name, "ansatz": ansatz_name, "seed": seed, "learning_rate": learning_rate, "final_cost": final_cost,
-            "cost_history": cost_history, "n_params": n_params, "final_weights": w.tolist() if hasattr(w, 'tolist') else list(w),
-            "variational_block_fn": variational_block_fn}
+                if it % 100 == 0 or it < 10:
+                    print(f"  Step {it:3d}: Cost = {cost:9.7f}, Fidelity = {quality['fidelity']:.4f}, Residual = {quality['residual_error']:.4f}")
 
+                # Verificar si tenemos una buena solución
+                if quality['fidelity'] > MIN_FIDELITY and quality['residual_error'] < MAX_RESIDUAL:
+                    print(f"  ✅ Good solution found at step {it}!")
+                    break
 
-def compare_classical_quantum_solution(result):
-    """
-    Compara la solución clásica con la cuántica y calcula la fidelidad.
-    """
-    print("\n" + "=" * 50)
-    print("COMPARISON OF CLASSICAL AND QUANTUM RESULTS")
-    print("=" * 50)
+            except Exception as e:
+                print(f"  Warning: Quality evaluation failed at step {it}: {e}")
 
-    # Extraer parámetros optimizados
-    w = np.array(result["final_weights"])
-    variational_block_fn = result["variational_block_fn"]
+        # Verificar convergencia
+        if it > 200:  # Empezar a verificar después de algunos pasos
+            converged, reason = check_convergence(cost_history)
+            if converged:
+                print(f"  🔄 {reason} at step {it}")
+                break
 
-    # Solución clásica
-    print("Computing classical solution...")
-    A_inv = np.linalg.pinv(A_matrix)
-    x_classical = np.dot(A_inv, b)
-    c_probs = (np.abs(x_classical / np.linalg.norm(x_classical))) ** 2
+        # Parar si no hay mejora por mucho tiempo
+        if no_improvement_count > PATIENCE * 2:
+            print(f"  🛑 No improvement for {no_improvement_count} steps, stopping early")
+            break
 
-    # Solución cuántica
-    print("Computing quantum solution...")
-    if MODO_ANALITICO:
-        print("Using analytical mode (statevector)...")
-        dev_x = qml.device("lightning.qubit", wires=n_qubits)
+    # Evaluar calidad final
+    final_quality = calculate_solution_quality(best_weights, variational_block_fn)
 
-        @qml.qnode(dev_x)
-        def get_solution_statevector(weights):
-            variational_block_fn(weights)
-            return qml.state()
+    print(f"  Final cost: {best_cost:.7f}")
+    print(f"  Final fidelity: {final_quality['fidelity']:.4f}")
+    print(f"  Final residual error: {final_quality['residual_error']:.4f}")
 
-        state_vector = get_solution_statevector(w)
-        q_probs = np.abs(state_vector) ** 2
+    # Determinar si la solución es aceptable
+    is_good_solution = (final_quality['fidelity'] > MIN_FIDELITY and final_quality['residual_error'] < MAX_RESIDUAL)
+
+    if is_good_solution:
+        print("  ✅ GOOD SOLUTION!")
     else:
-        print(f"Using sampling mode with {n_shots} shots...")
-        dev_x = qml.device("lightning.qubit", wires=n_qubits, shots=n_shots)
+        print("  ❌ Poor solution - consider different parameters")
 
-        @qml.qnode(dev_x)
-        def prepare_and_sample(weights):
-            variational_block_fn(weights)
-            return qml.sample()
+    return {"optimizer": optimizer_name, "ansatz": ansatz_name, "seed": seed, "learning_rate": learning_rate, "final_cost": float(best_cost),
+            "cost_history": cost_history, "quality_history": quality_history, "n_params": n_params,
+            "final_weights": best_weights.tolist() if hasattr(best_weights, 'tolist') else list(best_weights),
+            "variational_block_fn": variational_block_fn, "final_quality": final_quality, "is_good_solution": is_good_solution, "total_steps": it + 1}
 
-        raw_samples = prepare_and_sample(w)
-        samples = [int("".join(str(bs) for bs in sam), base=2) for sam in raw_samples]
-        q_probs = np.bincount(samples, minlength=2 ** n_qubits) / n_shots
 
-    # Mostrar resultados
-    print("\nRESULTS:")
-    print("-" * 30)
-    print("Classical probabilities |x_n|^2:")
-    for i, prob in enumerate(c_probs):
-        print(f"  State |{i:03b}>: {prob:.6f}")
+def compare_classical_quantum_solution_improved(result):
+    """
+    Compara la solución clásica con la cuántica con métricas mejoradas.
+    """
+    print("\n" + "=" * 60)
+    print("DETAILED COMPARISON OF CLASSICAL AND QUANTUM RESULTS")
+    print("=" * 60)
 
-    print("\nQuantum probabilities |<x|n>|^2:")
-    for i, prob in enumerate(q_probs):
-        print(f"  State |{i:03b}>: {prob:.6f}")
+    final_quality = result["final_quality"]
 
-    # Calcular fidelidad
-    fidelity = np.sum(np.sqrt(c_probs * q_probs))
-    print(f"\nFidelity between classical and quantum solutions: {fidelity:.6f}")
+    print(f"\n📊 QUALITY METRICS:")
+    print(f"  Fidelity: {final_quality['fidelity']:.6f}")
+    print(f"  Residual Error ||Ax-b||: {final_quality['residual_error']:.6f}")
+    print(f"  Probability Distance: {final_quality['prob_distance']:.6f}")
+    print(f"  Solution Quality: {'✅ GOOD' if result['is_good_solution'] else '❌ POOR'}")
 
-    # Visualización
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5), sharey=True)
+    c_probs = final_quality['classical_probs']
+    q_probs = final_quality['quantum_probs']
 
-    # Gráfico clásico
-    ax1.bar(np.arange(2 ** n_qubits), c_probs, color="blue", alpha=0.7)
-    ax1.set_title("Classical Probabilities")
+    print("\n📈 PROBABILITY DISTRIBUTIONS:")
+    print("-" * 40)
+    print("State    Classical    Quantum      Diff")
+    print("-" * 40)
+    for i in range(len(c_probs)):
+        diff = abs(c_probs[i] - q_probs[i])
+        status = "✅" if diff < 0.1 else "❌"
+        print(f"|{i:03b}>    {c_probs[i]:.6f}    {q_probs[i]:.6f}    {diff:.6f} {status}")
+
+    # Visualización mejorada
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 10))
+
+    # Gráfico de probabilidades
+    x_pos = np.arange(2 ** n_qubits)
+    width = 0.35
+
+    ax1.bar(x_pos - width / 2, c_probs, width, label='Classical', color='blue', alpha=0.7)
+    ax1.bar(x_pos + width / 2, q_probs, width, label='Quantum', color='green', alpha=0.7)
+    ax1.set_title("Classical vs Quantum Probabilities")
     ax1.set_xlabel("Basis states")
     ax1.set_ylabel("Probability")
-    ax1.set_xticks(np.arange(2 ** n_qubits))
-    ax1.set_xticklabels([f"|{i:03b}>" for i in range(2 ** n_qubits)], rotation=45)
+    ax1.set_xticks(x_pos)
+    ax1.set_xticklabels([f"|{i:03b}>" for i in range(2 ** n_qubits)])
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
 
-    # Gráfico cuántico
-    ax2.bar(np.arange(2 ** n_qubits), q_probs, color="green", alpha=0.7)
-    ax2.set_title("Quantum Probabilities")
+    # Diferencias
+    diffs = np.abs(c_probs - q_probs)
+    ax2.bar(x_pos, diffs, color='red', alpha=0.7)
+    ax2.set_title("Probability Differences |Classical - Quantum|")
     ax2.set_xlabel("Basis states")
-    ax2.set_xticks(np.arange(2 ** n_qubits))
-    ax2.set_xticklabels([f"|{i:03b}>" for i in range(2 ** n_qubits)], rotation=45)
+    ax2.set_ylabel("Absolute Difference")
+    ax2.set_xticks(x_pos)
+    ax2.set_xticklabels([f"|{i:03b}>" for i in range(2 ** n_qubits)])
+    ax2.axhline(y=0.1, color='orange', linestyle='--', label='Tolerance (0.1)')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+
+    # Convergencia del coste
+    ax3.plot(result["cost_history"], 'b-', linewidth=2)
+    ax3.set_title("Cost Function Convergence")
+    ax3.set_xlabel("Steps")
+    ax3.set_ylabel("Cost")
+    ax3.grid(True, alpha=0.3)
+    ax3.set_yscale('log')
+
+    # Evolución de la fidelidad
+    if result["quality_history"]:
+        steps_q = [q['step'] for q in result["quality_history"]]
+        fidelities = [q['fidelity'] for q in result["quality_history"]]
+        residuals = [q['residual_error'] for q in result["quality_history"]]
+
+        ax4_twin = ax4.twinx()
+        line1 = ax4.plot(steps_q, fidelities, 'g-', linewidth=2, label='Fidelity')
+        line2 = ax4_twin.plot(steps_q, residuals, 'r-', linewidth=2, label='Residual Error')
+
+        ax4.set_xlabel("Steps")
+        ax4.set_ylabel("Fidelity", color='g')
+        ax4_twin.set_ylabel("Residual Error", color='r')
+        ax4.set_title("Quality Evolution")
+        ax4.axhline(y=MIN_FIDELITY, color='g', linestyle='--', alpha=0.5, label=f'Min Fidelity ({MIN_FIDELITY})')
+        ax4_twin.axhline(y=0.1, color='r', linestyle='--', alpha=0.5, label='Max Residual (0.1)')
+
+        # Combinar leyendas
+        lines = line1 + line2
+        labels = [l.get_label() for l in lines]
+        ax4.legend(lines, labels, loc='center right')
 
     plt.tight_layout()
     plt.show()
 
-    return {"classical_probs": c_probs.tolist(), "quantum_probs": q_probs.tolist(), "fidelity": float(fidelity)}
+    return final_quality
 
 
-def save_complete_results(result, comparison_data):
-    """Guarda los resultados completos incluyendo la comparación."""
+def save_complete_results_improved(result, comparison_data):
+    """Guarda los resultados completos con métricas mejoradas."""
 
-    # Helper to convert complex numbers
     def convert_complex(obj):
         if isinstance(obj, complex):
             return {"real": float(obj.real), "imag": float(obj.imag)}
@@ -404,17 +511,17 @@ def save_complete_results(result, comparison_data):
             return float(obj)
         return obj
 
-    # Crear el diccionario de resultados completo
     complete_results = {"timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         "optimization": {"optimizer": result["optimizer"], "ansatz": result["ansatz"], "seed": result["seed"],
                                          "learning_rate": result["learning_rate"], "final_cost": result["final_cost"],
-                                         "cost_history": result["cost_history"], "n_params": result["n_params"]}, "comparison": comparison_data,
-                        "configuration": {"n_qubits": n_qubits, "steps": steps, "eta": eta, "coefficients": c.tolist(),
+                                         "total_steps": result["total_steps"], "is_good_solution": result["is_good_solution"],
+                                         "cost_history": result["cost_history"], "quality_history": result["quality_history"],
+                                         "n_params": result["n_params"]}, "quality_metrics": comparison_data,
+                        "configuration": {"n_qubits": n_qubits, "max_steps": steps, "eta": eta, "coefficients": c.tolist(),
                                           "b_vector": [convert_complex(x) for x in b], "usar_coste_global": USAR_COSTE_GLOBAL,
-                                          "modo_analitico": MODO_ANALITICO}}
+                                          "convergence_threshold": CONVERGENCE_THRESHOLD, "min_fidelity": MIN_FIDELITY, "patience": PATIENCE}}
 
-    # Leer experimentos existentes
-    filename = "vqls_single_results.json"
+    filename = "vqls_improved_results.json"
     all_experiments = []
     if os.path.exists(filename):
         try:
@@ -423,233 +530,14 @@ def save_complete_results(result, comparison_data):
         except (json.JSONDecodeError, FileNotFoundError):
             all_experiments = []
 
-    # Agregar el nuevo experimento
     complete_results["experiment_id"] = len(all_experiments) + 1
     all_experiments.append(complete_results)
 
-    # Guardar todos los experimentos
     with open(filename, "w") as f:
         json.dump(all_experiments, f, indent=2, default=convert_complex)
 
-    print(f"\nComplete results saved to: {filename} (Experiment #{complete_results['experiment_id']})")
+    print(f"\nImproved results saved to: {filename} (Experiment #{complete_results['experiment_id']})")
     return filename
-
-
-def compare_optimizers_and_ansatzes():
-    """Compara diferentes combinaciones de optimizadores y ansätze."""
-
-    # Configuraciones a probar
-    optimizer_list = ["adam", "rmsprop", "nesterov", "adagrad"]  # Mejores para VQLS
-    ansatz_list = ["layered", "hardware_efficient"]  # Más expresivos "complex",
-
-    all_results = []
-
-    print("=" * 60)
-    print("SYSTEMATIC COMPARISON OF OPTIMIZERS AND ANSÄTZE")
-    print("=" * 60)
-
-    for optimizer_name in optimizer_list:
-        for ansatz_name in ansatz_list:
-            best_result = None
-            results_for_config = []
-
-            # Probar múltiples semillas para esta configuración
-            for seed in range(N_RANDOM_SEEDS):
-                try:
-                    result = run_single_optimization(optimizer_name, ansatz_name, seed)
-                    results_for_config.append(result)
-
-                    if best_result is None or result["final_cost"] < best_result["final_cost"]:
-                        best_result = result
-
-                except Exception as e:
-                    print(f"  ERROR with {optimizer_name}+{ansatz_name} (seed={seed}): {e}")
-                    continue
-
-            if best_result:
-                best_result["all_seeds_results"] = results_for_config
-                all_results.append(best_result)
-                print(f"  BEST for {optimizer_name}+{ansatz_name}: {best_result['final_cost']:.7f}")
-
-    return all_results
-
-
-def analyze_and_save_results(results):
-    """Analiza y guarda los resultados."""
-
-    # Encontrar el mejor resultado global
-    best_overall = min(results, key=lambda x: x["final_cost"])
-
-    print("\n" + "=" * 60)
-    print("ANALYSIS OF RESULTS")
-    print("=" * 60)
-
-    print(f"\nBEST OVERALL CONFIGURATION:")
-    print(f"  Optimizer: {best_overall['optimizer']}")
-    print(f"  Ansatz: {best_overall['ansatz']}")
-    print(f"  Final Cost: {best_overall['final_cost']:.7f}")
-    print(f"  Seed: {best_overall['seed']}")
-    print(f"  Parameters: {best_overall['n_params']}")
-
-    # Ranking por optimizador
-    print(f"\nRANKING BY OPTIMIZER:")
-    optimizer_avg = {}
-    for result in results:
-        opt = result["optimizer"]
-        if opt not in optimizer_avg:
-            optimizer_avg[opt] = []
-        optimizer_avg[opt].append(result["final_cost"])
-
-    for opt, costs in sorted(optimizer_avg.items(), key=lambda x: np.mean(x[1])):
-        avg_cost = np.mean(costs)
-        std_cost = np.std(costs)
-        print(f"  {opt:12s}: {avg_cost:.6f} ± {std_cost:.6f} (n={len(costs)})")
-
-    # Ranking por ansatz
-    print(f"\nRANKING BY ANSATZ:")
-    ansatz_avg = {}
-    for result in results:
-        ans = result["ansatz"]
-        if ans not in ansatz_avg:
-            ansatz_avg[ans] = []
-        ansatz_avg[ans].append(result["final_cost"])
-
-    for ans, costs in sorted(ansatz_avg.items(), key=lambda x: np.mean(x[1])):
-        avg_cost = np.mean(costs)
-        std_cost = np.std(costs)
-        print(f"  {ans:18s}: {avg_cost:.6f} ± {std_cost:.6f} (n={len(costs)})")
-
-    # Guardar resultados
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"vqls_comparison_{timestamp}.json"
-
-    # Helper mejorado para convertir números complejos y evitar referencias circulares
-    def convert_complex(obj):
-        if isinstance(obj, complex):
-            return {"real": float(obj.real), "imag": float(obj.imag)}
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
-        if isinstance(obj, (np.integer, np.floating)):
-            return float(obj)
-        return obj
-
-    # Crear versión limpia de los resultados sin referencias circulares
-    clean_results = []
-    for result in results:
-        clean_result = {"optimizer": result["optimizer"], "ansatz": result["ansatz"], "seed": result["seed"],
-                        "learning_rate": result["learning_rate"], "final_cost": float(result["final_cost"]), "n_params": result["n_params"],
-                        "cost_history": [float(c) for c in result["cost_history"][-50:]]  # Solo últimos 50 para ahorrar espacio
-                        }
-        # Solo incluir final_weights si no es muy grande
-        if result["n_params"] <= 20:
-            clean_result["final_weights"] = [float(w) for w in result["final_weights"]]
-        clean_results.append(clean_result)
-
-    # Crear best_overall limpio
-    clean_best_overall = {"optimizer": best_overall["optimizer"], "ansatz": best_overall["ansatz"], "seed": best_overall["seed"],
-                          "learning_rate": best_overall["learning_rate"], "final_cost": float(best_overall["final_cost"]),
-                          "n_params": best_overall["n_params"], "cost_history": [float(c) for c in best_overall["cost_history"]]}
-    if best_overall["n_params"] <= 20:
-        clean_best_overall["final_weights"] = [float(w) for w in best_overall["final_weights"]]
-
-    experiment_data = {"timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "best_overall": clean_best_overall, "all_results": clean_results,
-                       "summary": {"optimizer_ranking": {opt: {"mean": float(np.mean(costs)), "std": float(np.std(costs))} for opt, costs in
-                                                         optimizer_avg.items()},
-                                   "ansatz_ranking": {ans: {"mean": float(np.mean(costs)), "std": float(np.std(costs))} for ans, costs in
-                                                      ansatz_avg.items()}},
-                       "configuration": {"n_qubits": n_qubits, "steps": steps, "eta": eta, "coefficients": c.tolist(),
-                                         "b_vector": [convert_complex(x) for x in b], "usar_coste_global": USAR_COSTE_GLOBAL}}
-
-    try:
-        with open(filename, "w") as f:
-            json.dump(experiment_data, f, indent=2, default=convert_complex)
-        print(f"\nResults saved to: {filename}")
-    except Exception as e:
-        print(f"\nError saving JSON: {e}")
-        # Guardar versión mínima si falla
-        minimal_data = {"timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "best_config": f"{best_overall['optimizer']} + {best_overall['ansatz']}", "best_cost": float(best_overall["final_cost"]),
-                        "optimizer_ranking": {opt: float(np.mean(costs)) for opt, costs in optimizer_avg.items()},
-                        "ansatz_ranking": {ans: float(np.mean(costs)) for ans, costs in ansatz_avg.items()}}
-        backup_filename = f"vqls_minimal_{timestamp}.json"
-        with open(backup_filename, "w") as f:
-            json.dump(minimal_data, f, indent=2)
-        print(f"Minimal results saved to: {backup_filename}")
-        filename = backup_filename
-
-    return best_overall, filename
-
-
-def plot_comparison_results(results):
-    """Visualiza los resultados de la comparación."""
-
-    # Crear figura con subplots
-    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 12))
-
-    # 1. Boxplot por optimizador
-    optimizer_data = {}
-    for result in results:
-        opt = result["optimizer"]
-        if opt not in optimizer_data:
-            optimizer_data[opt] = []
-        optimizer_data[opt].append(result["final_cost"])
-
-    ax1.boxplot(optimizer_data.values(), labels=optimizer_data.keys())
-    ax1.set_title("Final Cost by Optimizer")
-    ax1.set_ylabel("Final Cost")
-    ax1.tick_params(axis='x', rotation=45)
-
-    # 2. Boxplot por ansatz
-    ansatz_data = {}
-    for result in results:
-        ans = result["ansatz"]
-        if ans not in ansatz_data:
-            ansatz_data[ans] = []
-        ansatz_data[ans].append(result["final_cost"])
-
-    ax2.boxplot(ansatz_data.values(), labels=ansatz_data.keys())
-    ax2.set_title("Final Cost by Ansatz")
-    ax2.set_ylabel("Final Cost")
-    ax2.tick_params(axis='x', rotation=45)
-
-    # 3. Convergencia del mejor resultado
-    best_result = min(results, key=lambda x: x["final_cost"])
-    ax3.plot(best_result["cost_history"], 'b-', linewidth=2)
-    ax3.set_title(f"Best Convergence: {best_result['optimizer']} + {best_result['ansatz']}")
-    ax3.set_xlabel("Steps")
-    ax3.set_ylabel("Cost")
-    ax3.grid(True, alpha=0.3)
-
-    # 4. Heatmap de costes finales
-    optimizers = sorted(set(r["optimizer"] for r in results))
-    ansatzes = sorted(set(r["ansatz"] for r in results))
-
-    cost_matrix = np.full((len(optimizers), len(ansatzes)), np.nan)
-    for result in results:
-        i = optimizers.index(result["optimizer"])
-        j = ansatzes.index(result["ansatz"])
-        cost_matrix[i, j] = result["final_cost"]
-
-    im = ax4.imshow(cost_matrix, cmap='viridis', aspect='auto')
-    ax4.set_xticks(range(len(ansatzes)))
-    ax4.set_yticks(range(len(optimizers)))
-    ax4.set_xticklabels(ansatzes, rotation=45)
-    ax4.set_yticklabels(optimizers)
-    ax4.set_title("Cost Heatmap (Optimizer vs Ansatz)")
-
-    # Agregar colorbar
-    plt.colorbar(im, ax=ax4)
-
-    # Agregar valores en el heatmap
-    for i in range(len(optimizers)):
-        for j in range(len(ansatzes)):
-            if not np.isnan(cost_matrix[i, j]):
-                ax4.text(j, i, f'{cost_matrix[i, j]:.4f}', ha='center', va='center', color='white', fontsize=8)
-
-    plt.tight_layout()
-    plt.show()
-
-    return fig
 
 
 #
@@ -658,49 +546,144 @@ def plot_comparison_results(results):
 
 if __name__ == "__main__":
     if MULTIPLE_RUNS:
-        # Comparación sistemática
-        results = compare_optimizers_and_ansatzes()
-
-        if results:
-            best_result, filename = analyze_and_save_results(results)
-            plot_comparison_results(results)
-
-            print(f"\n🎉 Experiment completed!")
-            print(f"Best configuration: {best_result['optimizer']} + {best_result['ansatz']}")
-            print(f"Final cost: {best_result['final_cost']:.7f}")
-        else:
-            print("No successful results obtained.")
-
+        print("Multiple runs mode not yet updated for improved version")
+        print("Set MULTIPLE_RUNS = False to test improved single optimization")
     else:
-        # Ejecución individual (modo original) - AHORA CON COMPARACIÓN COMPLETA
         print("=" * 60)
-        print("SINGLE EXPERIMENT MODE WITH FULL COMPARISON")
+        print("IMPROVED SINGLE EXPERIMENT WITH CONVERGENCE VERIFICATION")
         print("=" * 60)
 
-        optimizer_name = "adagrad"
-        ansatz_name = "hardware_efficient"
+        # Probar con diferentes configuraciones - CONFIGURACIONES MEJORADAS
+        configs_to_try = [("adam", "hardware_efficient", 0.01),  # Learning rate más bajo
+                          ("adagrad", "complex", 0.05),  # Diferentes combinaciones
+                          ("rmsprop", "default", 0.02),  # Ansatz más simple
+                          ("nesterov", "hardware_efficient", 0.03),  # Optimizador con momentum
+                          ]
 
-        print(f"Running optimization with {optimizer_name} + {ansatz_name}...")
-        result = run_single_optimization(optimizer_name, ansatz_name, rng_seed)
+        all_results = []
+        best_result = None
+        best_quality = 0
 
-        # Mostrar convergencia de la optimización
-        plt.figure(figsize=(10, 6))
-        plt.plot(result["cost_history"], "g", linewidth=2)
-        plt.ylabel("Cost Function")
-        plt.xlabel("Optimization steps")
-        plt.title(f"VQLS Optimization: {optimizer_name} + {ansatz_name}")
-        plt.grid(True, alpha=0.3)
-        plt.show()
+        for optimizer_name, ansatz_name, lr in configs_to_try:
+            print(f"\n🧪 Testing {optimizer_name} + {ansatz_name} (lr={lr})")
 
-        print(f"Final optimization cost: {result['final_cost']:.7f}")
+            result = run_single_optimization_improved(optimizer_name, ansatz_name, rng_seed, lr)
+            all_results.append(result)
 
-        # Comparación clásica vs cuántica
-        comparison_data = compare_classical_quantum_solution(result)
+            # Guardar la mejor solución (incluso si no es "buena")
+            if result["final_quality"]["fidelity"] > best_quality:
+                best_result = result
+                best_quality = result["final_quality"]["fidelity"]
 
-        # Guardar resultados completos
-        filename = save_complete_results(result, comparison_data)
+        # SIEMPRE mostrar resultados del mejor intento
+        if best_result:
+            print(f"\n🎯 BEST ATTEMPT (may not be perfect):")
+            print(f"Configuration: {best_result['optimizer']} + {best_result['ansatz']}")
+            print(f"Final fidelity: {best_result['final_quality']['fidelity']:.6f}")
+            print(f"Final cost: {best_result['final_cost']:.6f}")
+            print(f"Residual error: {best_result['final_quality']['residual_error']:.6f}")
 
-        print(f"\n🎉 Single experiment completed successfully!")
-        print(f"Optimization cost: {result['final_cost']:.7f}")
-        print(f"Classical-Quantum fidelity: {comparison_data['fidelity']:.6f}")
-        print(f"Results saved to: {filename}")
+            # Mostrar gráfico de convergencia SIEMPRE
+            plt.figure(figsize=(12, 8))
+
+            # Subplot 1: Convergencia de todas las configuraciones
+            plt.subplot(2, 2, 1)
+            for i, result in enumerate(all_results):
+                config_name = f"{result['optimizer']}+{result['ansatz']}"
+                plt.plot(result["cost_history"], linewidth=2, label=config_name)
+            plt.ylabel("Cost Function")
+            plt.xlabel("Steps")
+            plt.title("Cost Convergence Comparison")
+            plt.yscale('log')
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+
+            # Subplot 2: Mejor convergencia
+            plt.subplot(2, 2, 2)
+            plt.plot(best_result["cost_history"], "g", linewidth=3)
+            plt.ylabel("Cost Function")
+            plt.xlabel("Steps")
+            plt.title(f"Best: {best_result['optimizer']} + {best_result['ansatz']}")
+            plt.yscale('log')
+            plt.grid(True, alpha=0.3)
+
+            # Subplot 3: Evolución de calidad
+            if best_result["quality_history"]:
+                steps_q = [q['step'] for q in best_result["quality_history"]]
+                fidelities = [q['fidelity'] for q in best_result["quality_history"]]
+                residuals = [q['residual_error'] for q in best_result["quality_history"]]
+
+                plt.subplot(2, 2, 3)
+                plt.plot(steps_q, fidelities, 'g-', linewidth=2, label='Fidelity')
+                plt.axhline(y=MIN_FIDELITY, color='g', linestyle='--', alpha=0.5, label=f'Target ({MIN_FIDELITY})')
+                plt.ylabel("Fidelity")
+                plt.xlabel("Steps")
+                plt.title("Fidelity Evolution")
+                plt.legend()
+                plt.grid(True, alpha=0.3)
+
+                plt.subplot(2, 2, 4)
+                plt.plot(steps_q, residuals, 'r-', linewidth=2, label='Residual Error')
+                plt.axhline(y=0.1, color='r', linestyle='--', alpha=0.5, label='Target (0.1)')
+                plt.ylabel("Residual Error")
+                plt.xlabel("Steps")
+                plt.title("Residual Error Evolution")
+                plt.yscale('log')
+                plt.legend()
+                plt.grid(True, alpha=0.3)
+
+            plt.tight_layout()
+            plt.show()
+
+            # SIEMPRE hacer comparación detallada
+            print(f"\n📊 DETAILED ANALYSIS OF BEST ATTEMPT:")
+            comparison_data = compare_classical_quantum_solution_improved(best_result)
+
+            # SIEMPRE guardar resultados
+            filename = save_complete_results_improved(best_result, comparison_data)
+
+            # Resumen final con recomendaciones
+            print(f"\n" + "=" * 60)
+            print("SUMMARY AND RECOMMENDATIONS")
+            print("=" * 60)
+
+            print(f"✅ Best configuration: {best_result['optimizer']} + {best_result['ansatz']}")
+            print(f"📈 Final fidelity: {best_result['final_quality']['fidelity']:.6f}")
+            print(f"📉 Final cost: {best_result['final_cost']:.6f}")
+            print(f"🎯 Residual error: {best_result['final_quality']['residual_error']:.6f}")
+            print(f"⏱️  Steps taken: {best_result['total_steps']}")
+
+            if best_result['is_good_solution']:
+                print("🎉 EXCELLENT: Solution meets quality criteria!")
+            else:
+                print("\n🔧 RECOMMENDATIONS FOR IMPROVEMENT:")
+                if best_result['final_quality']['fidelity'] < 0.8:
+                    print("  • Fidelity too low - try different ansatz or more parameters")
+                if best_result['final_quality']['residual_error'] > 0.5:
+                    print("  • High residual error - problem may be ill-conditioned")
+                if best_result['final_cost'] > 0.1:
+                    print("  • High final cost - try smaller learning rates or more steps")
+                print("  • Try different initial seeds (rng_seed)")
+                print("  • Increase number of optimization steps")
+                print("  • Experiment with q_delta (initial parameter spread)")
+
+            print(f"\n💾 Results saved to: {filename}")
+
+        else:
+            print("\n❌ Unexpected error: No results obtained!")
+
+        # Mostrar tabla comparativa final
+        if all_results:
+            print(f"\n📋 CONFIGURATION COMPARISON:")
+            print("-" * 80)
+            print(f"{'Config':<25} {'Final Cost':<12} {'Fidelity':<10} {'Residual':<10} {'Steps':<8}")
+            print("-" * 80)
+            for result in sorted(all_results, key=lambda x: x['final_quality']['fidelity'], reverse=True):
+                config = f"{result['optimizer']}+{result['ansatz']}"
+                cost = result['final_cost']
+                fidelity = result['final_quality']['fidelity']
+                residual = result['final_quality']['residual_error']
+                steps = result['total_steps']
+                status = "✅" if result['is_good_solution'] else "❌"
+                print(f"{config:<25} {cost:<12.6f} {fidelity:<10.4f} {residual:<10.4f} {steps:<8} {status}")
+            print("-" * 80)
