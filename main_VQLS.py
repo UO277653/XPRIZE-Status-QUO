@@ -15,10 +15,10 @@ from datetime import datetime
 n_qubits = 3  # Number of system qubits.
 tot_qubits = n_qubits + 1  # Addition of an ancillary qubit.
 ancilla_idx = n_qubits  # Index of the ancillary qubit (last position).
-steps = 300  # Number of optimization steps
-eta = 0.8  # Learning rate
+steps = 1000  # Number of optimization steps
+eta = 0.4  # Learning rate
 q_delta = 0.01  # Initial spread of random quantum weights
-rng_seed = 0  # Seed for random number generator
+rng_seed = 2  # Seed for random number generator
 n_layers = 2
 
 # --------------------------------------------------------------------------
@@ -28,11 +28,11 @@ USAR_COSTE_GLOBAL = False  # Cambiado a True por defecto para rapidez
 # --------------------------------------------------------------------------
 
 # Opción para modo analítico/muestreo en el resultado final (ya implementada)
-MODO_ANALITICO = False
+MODO_ANALITICO = True
 n_shots = 10 ** 6
 
 # NUEVO: Configuración para múltiples experimentos
-MULTIPLE_RUNS = True  # Para probar múltiples configuraciones
+MULTIPLE_RUNS = False  # Para probar múltiples configuraciones
 N_RANDOM_SEEDS = 3  # Número de semillas aleatorias por configuración
 
 
@@ -298,10 +298,10 @@ def run_single_optimization(optimizer_name, ansatz_name, seed, learning_rate=eta
         cost_history.append(float(cost))  # Asegurar que es float
 
         if it % 20 == 0 or it < 5:
-            print(f"  Step {it:3d}: Cost = {cost:9.15f}")
+            print(f"  Step {it:3d}: Cost = {cost:9.20f}")
 
     final_cost = cost_history[-1]
-    print(f"  Final cost: {final_cost:.7f}")
+    print(f"  Final cost: {final_cost:.20f}")
 
     return {"optimizer": optimizer_name, "ansatz": ansatz_name, "seed": seed, "learning_rate": learning_rate, "final_cost": final_cost,
             "cost_history": cost_history, "n_params": n_params, "final_weights": w.tolist() if hasattr(w, 'tolist') else list(w),
@@ -440,7 +440,7 @@ def compare_optimizers_and_ansatzes():
 
     # Configuraciones a probar
     optimizer_list = ["adam", "rmsprop", "nesterov", "adagrad"]  # Mejores para VQLS
-    ansatz_list = ["complex", "layered", "hardware_efficient"]  # Más expresivos
+    ansatz_list = ["layered", "hardware_efficient"]  # Más expresivos "complex",
 
     all_results = []
 
@@ -677,7 +677,7 @@ if __name__ == "__main__":
         print("SINGLE EXPERIMENT MODE WITH FULL COMPARISON")
         print("=" * 60)
 
-        optimizer_name = "adam"
+        optimizer_name = "adagrad"
         ansatz_name = "hardware_efficient"
 
         print(f"Running optimization with {optimizer_name} + {ansatz_name}...")
