@@ -191,7 +191,7 @@ dev_cost = qml.device("lightning.qubit", wires=tot_qubits)
 
 
 # --- Subrutinas para el Coste LOCAL (original) ---
-@qml.qnode(dev_cost, interface="autograd")
+@qml.qnode(dev_cost, interface="autograd", diff_method="adjoint")
 def local_hadamard_test(weights, l, lp, j, part, variational_block_fn):
     qml.Hadamard(wires=ancilla_idx)
     if part == "Im":
@@ -224,7 +224,7 @@ def cost_loc(weights, variational_block_fn=variational_block):
 
 
 # --- Subrutinas para el Coste GLOBAL (NUEVO y RÁPIDO) ---
-@qml.qnode(dev_cost, interface="autograd")
+@qml.qnode(dev_cost, interface="autograd", diff_method="adjoint")
 def global_hadamard_test(weights, l, part, variational_block_fn):
     qml.Hadamard(wires=ancilla_idx)
     if part == "Im":
