@@ -15,24 +15,28 @@ from datetime import datetime
 n_qubits = 3  # Number of system qubits.
 tot_qubits = n_qubits + 1  # Addition of an ancillary qubit.
 ancilla_idx = n_qubits  # Index of the ancillary qubit (last position).
-steps = 1000  # Number of optimization steps
+steps = 2000  # Number of optimization steps
 eta = 0.4  # Learning rate
 q_delta = 0.01  # Initial spread of random quantum weights
 rng_seed = 2  # Seed for random number generator
 n_layers = 2
 
 # --------------------------------------------------------------------------
-# True: Usa la función de coste "Global". Es mucho más rápida (menos simulaciones por paso).
-# False: Usa la función de coste "Local" original (muy lenta pero teóricamente robusta).
-USAR_COSTE_GLOBAL = False  # Cambiado a True por defecto para rapidez
+# MODOS DE EJECUCIÓN
+MULTIPLE_RUNS = False  # Para comparación sistemática
+SINGLE_MODE = True  # Para experimento individual
+REFINEMENT_MODE = False  # NUEVO: Para refinamiento de la mejor configuración
 # --------------------------------------------------------------------------
 
-# Opción para modo analítico/muestreo en el resultado final (ya implementada)
+# True: Usa la función de coste "Global". Es mucho más rápida (menos simulaciones por paso).
+# False: Usa la función de coste "Local" original (muy lenta pero teóricamente robusta).
+USAR_COSTE_GLOBAL = False
+
+# Opción para modo analítico/muestreo en el resultado final
 MODO_ANALITICO = True
 n_shots = 10 ** 6
 
-# NUEVO: Configuración para múltiples experimentos
-MULTIPLE_RUNS = False  # Para probar múltiples configuraciones
+# Configuración para múltiples experimentos
 N_RANDOM_SEEDS = 3  # Número de semillas aleatorias por configuración
 
 
@@ -259,9 +263,14 @@ def psi_norm(weights, variational_block_fn=variational_block):
     return abs(norm)
 
 
-def run_single_optimization(optimizer_name, ansatz_name, seed, learning_rate=eta):
-    """Ejecuta una optimización individual."""
-    print(f"\n--- Running: {optimizer_name} + {ansatz_name} (seed={seed}) ---")
+def run_single_optimization(optimizer_name, ansatz_name, seed, learning_rate=eta, max_steps=None, q_delta_local=None):
+    """Ejecuta una optimización individual con parámetros opcionales."""
+    if max_steps is None:
+        max_steps = steps
+    if q_delta_local is None:
+        q_delta_local = q_delta
+
+    print(f"\n--- Running: {optimizer_name} + {ansatz_name} (seed={seed}, lr={learning_rate}, steps={max_steps}) ---")
 
     # Configurar optimizador
     if optimizer_name == "spsa":
@@ -275,7 +284,7 @@ def run_single_optimization(optimizer_name, ansatz_name, seed, learning_rate=eta
 
     # Inicializar parámetros
     np.random.seed(seed)
-    w = q_delta * np.random.randn(n_params, requires_grad=True)
+    w = q_delta_local * np.random.randn(n_params, requires_grad=True)
 
     # Elegir función de coste
     if USAR_COSTE_GLOBAL:
@@ -287,7 +296,7 @@ def run_single_optimization(optimizer_name, ansatz_name, seed, learning_rate=eta
 
     # Optimización
     cost_history = []
-    for it in range(steps):
+    for it in range(max_steps):
         if optimizer_name == "spsa":
             # SPSA tiene una interfaz ligeramente diferente
             w = opt.step(cost_function, w)
@@ -297,21 +306,55 @@ def run_single_optimization(optimizer_name, ansatz_name, seed, learning_rate=eta
 
         cost_history.append(float(cost))  # Asegurar que es float
 
-        if it % 20 == 0 or it < 5:
+        if it % 100 == 0 or it <= 5:
             print(f"  Step {it:3d}: Cost = {cost:9.20f}")
 
     final_cost = cost_history[-1]
-    print(f"  Final cost: {final_cost:.20f}")
+    print(f"  Final cost: {final_cost:.7f}")
 
     return {"optimizer": optimizer_name, "ansatz": ansatz_name, "seed": seed, "learning_rate": learning_rate, "final_cost": final_cost,
             "cost_history": cost_history, "n_params": n_params, "final_weights": w.tolist() if hasattr(w, 'tolist') else list(w),
-            "variational_block_fn": variational_block_fn}
+            "variational_block_fn": variational_block_fn, "max_steps": max_steps, "q_delta_used": q_delta_local}
+
+
+def calculate_solution_quality(result):
+    """Calcula métricas de calidad de la solución cuántica."""
+    w = np.array(result["final_weights"])
+    variational_block_fn = result["variational_block_fn"]
+
+    # Obtener vector de estado cuántico
+    dev_x = qml.device("lightning.qubit", wires=n_qubits)
+
+    @qml.qnode(dev_x)
+    def get_quantum_state(weights):
+        variational_block_fn(weights)
+        return qml.state()
+
+    quantum_state = get_quantum_state(w)
+    q_probs = np.abs(quantum_state) ** 2
+
+    # Solución clásica
+    A_inv = np.linalg.pinv(A_matrix)
+    x_classical = np.dot(A_inv, b)
+    x_classical_normalized = x_classical / np.linalg.norm(x_classical)
+    c_probs = np.abs(x_classical_normalized) ** 2
+
+    # Métricas de calidad
+    fidelity = np.sum(np.sqrt(c_probs * q_probs))
+
+    # Error residual: ||Ax - b||
+    quantum_amplitudes = quantum_state / np.linalg.norm(quantum_state)
+    residual_error = np.linalg.norm(A_matrix @ quantum_amplitudes - b)
+
+    # Distancia L2 entre distribuciones de probabilidad
+    prob_distance = np.linalg.norm(c_probs - q_probs)
+
+    return {'fidelity': float(fidelity), 'residual_error': float(residual_error), 'prob_distance': float(prob_distance),
+            'classical_probs': c_probs.tolist(), 'quantum_probs': q_probs.tolist()}
 
 
 def compare_classical_quantum_solution(result):
-    """
-    Compara la solución clásica con la cuántica y calcula la fidelidad.
-    """
+    """Compara la solución clásica con la cuántica y calcula la fidelidad."""
     print("\n" + "=" * 50)
     print("COMPARISON OF CLASSICAL AND QUANTUM RESULTS")
     print("=" * 50)
@@ -330,14 +373,15 @@ def compare_classical_quantum_solution(result):
     print("Computing quantum solution...")
     if MODO_ANALITICO:
         print("Using analytical mode (statevector)...")
-        dev_x = qml.device("lightning.qubit", wires=n_qubits)
+        dev_x = qml.device("lightning.qubit", wires=n_qubits, shots=None)
 
-        @qml.qnode(dev_x)
+        @qml.qnode(dev_x, interface="autograd")
         def get_solution_statevector(weights):
             variational_block_fn(weights)
             return qml.state()
 
         state_vector = get_solution_statevector(w)
+        state_vector = state_vector / np.linalg.norm(state_vector)  # ¡AÑADE ESTA LÍNEA!
         q_probs = np.abs(state_vector) ** 2
     else:
         print(f"Using sampling mode with {n_shots} shots...")
@@ -367,7 +411,7 @@ def compare_classical_quantum_solution(result):
     fidelity = np.sum(np.sqrt(c_probs * q_probs))
     print(f"\nFidelity between classical and quantum solutions: {fidelity:.6f}")
 
-    # Visualización
+    # Visualización CORREGIDA
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5), sharey=True)
 
     # Gráfico clásico
@@ -391,7 +435,7 @@ def compare_classical_quantum_solution(result):
     return {"classical_probs": c_probs.tolist(), "quantum_probs": q_probs.tolist(), "fidelity": float(fidelity)}
 
 
-def save_complete_results(result, comparison_data):
+def save_complete_results(result, comparison_data, mode="single"):
     """Guarda los resultados completos incluyendo la comparación."""
 
     # Helper to convert complex numbers
@@ -405,7 +449,7 @@ def save_complete_results(result, comparison_data):
         return obj
 
     # Crear el diccionario de resultados completo
-    complete_results = {"timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    complete_results = {"timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "mode": mode,
                         "optimization": {"optimizer": result["optimizer"], "ansatz": result["ansatz"], "seed": result["seed"],
                                          "learning_rate": result["learning_rate"], "final_cost": result["final_cost"],
                                          "cost_history": result["cost_history"], "n_params": result["n_params"]}, "comparison": comparison_data,
@@ -413,8 +457,12 @@ def save_complete_results(result, comparison_data):
                                           "b_vector": [convert_complex(x) for x in b], "usar_coste_global": USAR_COSTE_GLOBAL,
                                           "modo_analitico": MODO_ANALITICO}}
 
-    # Leer experimentos existentes
-    filename = "vqls_single_results.json"
+    # Determinar filename según el modo
+    if mode == "refinement":
+        filename = "vqls_refinement_results.json"
+    else:
+        filename = "vqls_single_results.json"
+
     all_experiments = []
     if os.path.exists(filename):
         try:
@@ -435,12 +483,193 @@ def save_complete_results(result, comparison_data):
     return filename
 
 
+# ============================================================================
+# REFINEMENT MODE
+# ============================================================================
+
+def refine_best_configuration():
+    """Refina la mejor configuración encontrada con diferentes parámetros."""
+    print("=" * 70)
+    print("🔬 REFINEMENT MODE: Optimizing Best Configuration")
+    print("=" * 70)
+
+    # Mejor configuración base (basada en tus resultados anteriores)
+    base_optimizer = "nesterov"
+    base_ansatz = "hardware_efficient"
+
+    # Parámetros a probar para refinamiento
+    refinement_configs = [(base_optimizer, base_ansatz, 0.2, "Medium LR", rng_seed, steps, q_delta),
+                          (base_optimizer, base_ansatz, 0.4, "Medium LR", rng_seed, steps, q_delta),
+                          (base_optimizer, base_ansatz, 0.6, "Medium LR", rng_seed, steps, q_delta),
+                          (base_optimizer, base_ansatz, 0.8, "Base LR", rng_seed, steps, q_delta),
+                          (base_optimizer, base_ansatz, 0.95, "Higher LR", rng_seed, steps, q_delta),
+                          (base_optimizer, base_ansatz, 0.4, "Fine-tuned", rng_seed, 1500, q_delta),
+                          (base_optimizer, base_ansatz, 0.4, "Very Fine", rng_seed, 2000, q_delta),
+                          ("adam", base_ansatz, 0.6, "Adam Fine", rng_seed, steps, q_delta),
+                          ("adagrad", base_ansatz, 0.6, "Adagrad", rng_seed, steps, q_delta), ]
+
+    best_fidelity = 0
+    best_residual = float('inf')
+    best_overall = None
+    all_refined_results = []
+
+    for opt, ans, lr, desc, seed, max_steps, q_delta_local in refinement_configs:
+        print(f"\n🧪 Refining: {desc} (lr={lr}, seed={seed}, steps={max_steps}, q_delta={q_delta_local})")
+
+        try:
+            result = run_single_optimization(opt, ans, seed, lr, max_steps, q_delta_local)
+
+            # Calcular métricas de calidad
+            quality = calculate_solution_quality(result)
+            result['quality'] = quality
+            result['description'] = desc
+            result['config_details'] = f"lr={lr}, seed={seed}, steps={max_steps}, q_delta={q_delta_local}"
+
+            all_refined_results.append(result)
+
+            fidelity = quality['fidelity']
+            residual = quality['residual_error']
+
+            print(f"  📊 Fidelity: {fidelity:.6f}, Residual: {residual:.6f}")
+
+            # Criterio de mejor solución: priorizar fidelidad alta, luego residual bajo
+            is_better = (fidelity > best_fidelity) or (fidelity > 0.95 and residual < best_residual)
+
+            if is_better:
+                best_fidelity = fidelity
+                best_residual = residual
+                best_overall = result
+                print(f"  🌟 NEW BEST!")
+
+        except Exception as e:
+            print(f"  ❌ Error: {e}")
+
+    return best_overall, all_refined_results
+
+
+def analyze_refinement_results(best_result, all_results):
+    """Analiza y visualiza los resultados del refinamiento."""
+    print(f"\n" + "=" * 70)
+    print("📈 REFINEMENT ANALYSIS")
+    print("=" * 70)
+
+    # Tabla de resultados
+    print(f"\n{'Configuration':<25} {'Fidelity':<10} {'Residual':<10} {'Cost':<12}")
+    print("-" * 60)
+
+    for result in sorted(all_results, key=lambda x: x['quality']['fidelity'], reverse=True):
+        desc = result['description']
+        fidelity = result['quality']['fidelity']
+        residual = result['quality']['residual_error']
+        cost = result['final_cost']
+
+        is_good = fidelity > 0.95 and residual < 1.0
+        marker = "🏆" if result == best_result else "✅" if is_good else "❌"
+        print(f"{desc:<25} {fidelity:<10.6f} {residual:<10.6f} {cost:<12.6f} {marker}")
+
+    # Visualizaciones
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
+
+    # 1. Fidelidad vs Residual scatter plot
+    fidelities = [r['quality']['fidelity'] for r in all_results]
+    residuals = [r['quality']['residual_error'] for r in all_results]
+
+    scatter = ax1.scatter(residuals, fidelities, c=range(len(all_results)), cmap='viridis', s=100, alpha=0.7)
+    ax1.set_xlabel('Residual Error')
+    ax1.set_ylabel('Fidelity')
+    ax1.set_title('Fidelity vs Residual Error')
+    ax1.grid(True, alpha=0.3)
+
+    # Marcar el mejor punto
+    if best_result:
+        best_fid = best_result['quality']['fidelity']
+        best_res = best_result['quality']['residual_error']
+        ax1.scatter([best_res], [best_fid], c='red', s=200, marker='*', label='Best Overall', edgecolor='black', linewidth=2)
+        ax1.legend()
+
+    # 2. Convergencia de las mejores configuraciones
+    top_3 = sorted(all_results, key=lambda x: x['quality']['fidelity'], reverse=True)[:3]
+
+    for i, result in enumerate(top_3):
+        ax2.plot(result['cost_history'], linewidth=2, label=f"{result['description']} (F={result['quality']['fidelity']:.3f})")
+
+    ax2.set_xlabel('Steps')
+    ax2.set_ylabel('Cost')
+    ax2.set_title('Convergence of Top 3 Configurations')
+    ax2.set_yscale('log')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+
+    # 3. Distribución de fidelidades
+    ax3.hist(fidelities, bins=10, alpha=0.7, color='green', edgecolor='black')
+    ax3.axvline(x=np.mean(fidelities), color='red', linestyle='--', label=f'Mean: {np.mean(fidelities):.3f}')
+    if best_result:
+        ax3.axvline(x=best_result['quality']['fidelity'], color='gold', linestyle='-', linewidth=3, label='Best')
+    ax3.set_xlabel('Fidelity')
+    ax3.set_ylabel('Frequency')
+    ax3.set_title('Distribution of Fidelities')
+    ax3.legend()
+    ax3.grid(True, alpha=0.3)
+
+    # 4. Mejores probabilidades cuánticas vs clásicas
+    if best_result:
+        c_probs = best_result['quality']['classical_probs']
+        q_probs = best_result['quality']['quantum_probs']
+
+        x_pos = np.arange(len(c_probs))
+        width = 0.35
+
+        ax4.bar(x_pos - width / 2, c_probs, width, label='Classical', color='blue', alpha=0.7)
+        ax4.bar(x_pos + width / 2, q_probs, width, label='Quantum', color='green', alpha=0.7)
+
+        ax4.set_xlabel('Basis States')
+        ax4.set_ylabel('Probability')
+        ax4.set_title(f'Best Solution: {best_result["description"]}')
+        ax4.set_xticks(x_pos)
+        ax4.set_xticklabels([f'|{i:03b}⟩' for i in range(len(c_probs))])
+        ax4.legend()
+        ax4.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.show()
+
+    return fig
+
+
+def run_refinement_mode():
+    """Ejecuta el modo de refinamiento completo."""
+    best_refined, all_refined = refine_best_configuration()
+
+    if best_refined:
+        print(f"\n🏆 BEST REFINED SOLUTION:")
+        print(f"  Configuration: {best_refined['description']}")
+        print(f"  Details: {best_refined['config_details']}")
+        print(f"  Fidelity: {best_refined['quality']['fidelity']:.8f}")
+        print(f"  Residual Error: {best_refined['quality']['residual_error']:.8f}")
+        print(f"  Final Cost: {best_refined['final_cost']:.8f}")
+
+        # Análisis detallado
+        analyze_refinement_results(best_refined, all_refined)
+
+        # Comparación final detallada
+        print(f"\n🔬 DETAILED ANALYSIS OF BEST REFINED SOLUTION:")
+        comparison_data = compare_classical_quantum_solution(best_refined)
+
+        # Guardar resultados refinados
+        filename = save_complete_results(best_refined, comparison_data, mode="refinement")
+
+        return best_refined, filename
+    else:
+        print("❌ No refined solutions found")
+        return None, None
+
+
 def compare_optimizers_and_ansatzes():
     """Compara diferentes combinaciones de optimizadores y ansätze."""
 
     # Configuraciones a probar
     optimizer_list = ["adam", "rmsprop", "nesterov", "adagrad"]  # Mejores para VQLS
-    ansatz_list = ["layered", "hardware_efficient"]  # Más expresivos "complex",
+    ansatz_list = ["layered", "hardware_efficient"]  # Más expresivos
 
     all_results = []
 
@@ -538,8 +767,7 @@ def analyze_and_save_results(results):
     for result in results:
         clean_result = {"optimizer": result["optimizer"], "ansatz": result["ansatz"], "seed": result["seed"],
                         "learning_rate": result["learning_rate"], "final_cost": float(result["final_cost"]), "n_params": result["n_params"],
-                        "cost_history": [float(c) for c in result["cost_history"][-50:]]  # Solo últimos 50 para ahorrar espacio
-                        }
+                        "cost_history": [float(c) for c in result["cost_history"][-50:]]}
         # Solo incluir final_weights si no es muy grande
         if result["n_params"] <= 20:
             clean_result["final_weights"] = [float(w) for w in result["final_weights"]]
@@ -594,7 +822,7 @@ def plot_comparison_results(results):
             optimizer_data[opt] = []
         optimizer_data[opt].append(result["final_cost"])
 
-    ax1.boxplot(optimizer_data.values(), labels=optimizer_data.keys())
+    ax1.boxplot(optimizer_data.values(), tick_labels=optimizer_data.keys())
     ax1.set_title("Final Cost by Optimizer")
     ax1.set_ylabel("Final Cost")
     ax1.tick_params(axis='x', rotation=45)
@@ -607,7 +835,7 @@ def plot_comparison_results(results):
             ansatz_data[ans] = []
         ansatz_data[ans].append(result["final_cost"])
 
-    ax2.boxplot(ansatz_data.values(), labels=ansatz_data.keys())
+    ax2.boxplot(ansatz_data.values(), tick_labels=ansatz_data.keys())
     ax2.set_title("Final Cost by Ansatz")
     ax2.set_ylabel("Final Cost")
     ax2.tick_params(axis='x', rotation=45)
@@ -653,12 +881,36 @@ def plot_comparison_results(results):
 
 
 #
-# EJECUCIÓN PRINCIPAL
+# EJECUCIÓN PRINCIPAL CON SELECCIÓN DE MODO
 #
 
 if __name__ == "__main__":
+    print("=" * 70)
+    print("🔬 VQLS OPTIMIZATION SUITE")
+    print("=" * 70)
+
+    # Verificar qué modo está activado
+    active_modes = []
+    if MULTIPLE_RUNS:
+        active_modes.append("MULTIPLE_RUNS")
+    if SINGLE_MODE:
+        active_modes.append("SINGLE_MODE")
+    if REFINEMENT_MODE:
+        active_modes.append("REFINEMENT_MODE")
+
+    if len(active_modes) != 1:
+        print("❌ ERROR: Exactly one mode must be True!")
+        print("Current modes:", active_modes)
+        print("Please set only one of: MULTIPLE_RUNS, SINGLE_MODE, REFINEMENT_MODE to True")
+        exit(1)
+
+    active_mode = active_modes[0]
+    print(f"🎯 Running in {active_mode}")
+    print("=" * 70)
+
     if MULTIPLE_RUNS:
         # Comparación sistemática
+        print("🔄 SYSTEMATIC COMPARISON MODE")
         results = compare_optimizers_and_ansatzes()
 
         if results:
@@ -671,13 +923,11 @@ if __name__ == "__main__":
         else:
             print("No successful results obtained.")
 
-    else:
-        # Ejecución individual (modo original) - AHORA CON COMPARACIÓN COMPLETA
-        print("=" * 60)
-        print("SINGLE EXPERIMENT MODE WITH FULL COMPARISON")
-        print("=" * 60)
+    elif SINGLE_MODE:
+        # Ejecución individual (modo original)
+        print("🎯 SINGLE EXPERIMENT MODE")
 
-        optimizer_name = "adagrad"
+        optimizer_name = "nesterov"
         ansatz_name = "hardware_efficient"
 
         print(f"Running optimization with {optimizer_name} + {ansatz_name}...")
@@ -698,9 +948,57 @@ if __name__ == "__main__":
         comparison_data = compare_classical_quantum_solution(result)
 
         # Guardar resultados completos
-        filename = save_complete_results(result, comparison_data)
+        filename = save_complete_results(result, comparison_data, mode="single")
 
         print(f"\n🎉 Single experiment completed successfully!")
         print(f"Optimization cost: {result['final_cost']:.7f}")
         print(f"Classical-Quantum fidelity: {comparison_data['fidelity']:.6f}")
         print(f"Results saved to: {filename}")
+
+    elif REFINEMENT_MODE:
+        # Modo de refinamiento
+        print("🔬 REFINEMENT MODE")
+        print("This mode will systematically refine the best known configuration:")
+        print("  - Base: nesterov + hardware_efficient")
+        print("  - Test different learning rates, seeds, steps, and q_delta values")
+        print("  - Find optimal parameters for maximum fidelity and minimum residual error")
+        print()
+
+        best_refined, refined_filename = run_refinement_mode()
+
+        if best_refined:
+            print(f"\n🎉 REFINEMENT COMPLETED SUCCESSFULLY!")
+            print(f"📈 Best configuration found: {best_refined['description']}")
+            print(f"📊 Final fidelity: {best_refined['quality']['fidelity']:.6f}")
+            print(f"📉 Final residual error: {best_refined['quality']['residual_error']:.6f}")
+            print(f"💾 Detailed results saved to: {refined_filename}")
+
+            # Mostrar recomendaciones finales
+            fidelity = best_refined['quality']['fidelity']
+            residual = best_refined['quality']['residual_error']
+
+            print(f"\n📋 QUALITY ASSESSMENT:")
+            if fidelity > 0.98:
+                print("✅ Excellent fidelity (>0.98)")
+            elif fidelity > 0.95:
+                print("✅ Good fidelity (>0.95)")
+            else:
+                print("⚠️  Moderate fidelity (<0.95)")
+
+            if residual < 0.1:
+                print("✅ Excellent residual error (<0.1)")
+            elif residual < 0.5:
+                print("✅ Good residual error (<0.5)")
+            else:
+                print("⚠️  High residual error (>0.5)")
+
+        else:
+            print("❌ Refinement failed to find improved solutions")
+            print("Consider:")
+            print("  - Different base configurations")
+            print("  - Modified problem parameters")
+            print("  - Alternative ansätze designs")
+
+    print(f"\n" + "=" * 70)
+    print("🏁 VQLS SUITE EXECUTION COMPLETED")
+    print("=" * 70)
