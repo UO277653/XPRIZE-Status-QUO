@@ -1,0 +1,78 @@
+[
+  {
+    "timestamp": "2025-06-26 23:12:43",
+    "mode": "single",
+    "optimization": {
+      "optimizer": "nesterov",
+      "ansatz": "hardware_efficient",
+      "seed": 2,
+      "learning_rate": 0.4,
+      "final_loss": 2.164471809339739,
+      "solution_quality": "0.46353663921121446",
+      "max_error_V": "1.1573267686059685",
+      "converged": false,
+      "optimization_time": 134.05237102508545
+    },
+    "comparison": {
+      "comparison_successful": true,
+      "max_error": 1.1573267686059685,
+      "relative_error": 0.965342405310904,
+      "V_target": [
+        1.0,
+        1.1,
+        0.95,
+        0.9
+      ],
+      "V_solution": [
+        "(1-0j)",
+        "(-0.04503026955906197-0j)",
+        "(-0.20732676860596846-0j)",
+        "(1.9024086534775868-0j)"
+      ],
+      "component_errors": [
+        0.0,
+        1.145030269559062,
+        1.1573267686059685,
+        1.0024086534775867
+      ]
+    },
+    "configuration": {
+      "num_qubits": 2,
+      "max_iters": 2000,
+      "tolerance": 1e-09,
+      "Y_matrix": [
+        [
+          "(5+0j)",
+          "(-5+0j)",
+          "0j",
+          "0j"
+        ],
+        [
+          "(-5+0j)",
+          "(10+0j)",
+          "(-5+0j)",
+          "0j"
+        ],
+        [
+          "0j",
+          "(-5+0j)",
+          "(10+0j)",
+          "(-5+0j)"
+        ],
+        [
+          "0j",
+          "0j",
+          "(-5+0j)",
+          "(5+0j)"
+        ]
+      ],
+      "V_target": [
+        1.0,
+        1.1,
+        0.95,
+        0.9
+      ]
+    },
+    "experiment_id": 1
+  }
+]
