@@ -74,5 +74,81 @@
       ]
     },
     "experiment_id": 1
+  },
+  {
+    "timestamp": "2025-06-27 15:31:30",
+    "mode": "single",
+    "optimization": {
+      "optimizer": "cobyla",
+      "ansatz": "complex_z",
+      "seed": 2,
+      "learning_rate": 0.05,
+      "final_loss": 0.005018873943257951,
+      "solution_quality": "0.8485367403048488",
+      "max_error_V": "0.1784993536528964",
+      "converged": "False",
+      "optimization_time": 17.74958372116089
+    },
+    "comparison": {
+      "comparison_successful": true,
+      "max_error": 0.1784993536528964,
+      "relative_error": 0.10772808700288708,
+      "V_target": [
+        1.0,
+        1.1,
+        0.95,
+        0.9
+      ],
+      "V_solution": [
+        "(1-0j)",
+        "(0.990062718520681-0.14062650317574826j)",
+        "(0.9999775516980924-0.00670045520010576j)",
+        "(0.999379290009689+0.03522832240867835j)"
+      ],
+      "component_errors": [
+        0.0,
+        0.1784993536528964,
+        0.05042471391712729,
+        0.1054385033209389
+      ]
+    },
+    "configuration": {
+      "num_qubits": 2,
+      "max_iters": 2000,
+      "tolerance": 1e-09,
+      "Y_matrix": [
+        [
+          "(5+0j)",
+          "(-5+0j)",
+          "0j",
+          "0j"
+        ],
+        [
+          "(-5+0j)",
+          "(10+0j)",
+          "(-5+0j)",
+          "0j"
+        ],
+        [
+          "0j",
+          "(-5+0j)",
+          "(10+0j)",
+          "(-5+0j)"
+        ],
+        [
+          "0j",
+          "0j",
+          "(-5+0j)",
+          "(5+0j)"
+        ]
+      ],
+      "V_target": [
+        1.0,
+        1.1,
+        0.95,
+        0.9
+      ]
+    },
+    "experiment_id": 2
   }
 ]
