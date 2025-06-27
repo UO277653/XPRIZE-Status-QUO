@@ -2,6 +2,7 @@
 # Inspirado en la estructura del VQLS pero usando el algoritmo VPFS
 # 🎯 INCLUDES VQLS OPTIMIZERS & ANSÄTZE - Try the winning combo: nesterov + hardware_efficient!
 # 🏆 Best VQLS config: nesterov + hardware_efficient (seed=2, lr=0.4, steps=2000)
+# 🔬 NOW TESTING: Complex Y matrices for general electrical networks!
 
 import os
 
@@ -21,15 +22,29 @@ import time
 import warnings
 
 # Suppress complex casting warnings for cleaner output
-warnings.filterwarnings("ignore", message="Casting complex values to real discards the imaginary part")
+# warnings.filterwarnings("ignore", message="Casting complex values to real discards the imaginary part")
 
 #
 # Setting of the main hyper-parameters of the model
 #
 
 # VPFS Problem parameters
-Y = np.array([[1, -1, 0, 0], [-1, 2, -1, 0], [0, -1, 2, -1], [0, 0, -1, 1]], dtype=complex) * 5
-V = np.array([1, 1.1, 0.95, 0.9])
+# 🔬 Y MATRIZ COMPLETAMENTE COMPLEJA - Redes eléctricas generales
+Y_real = np.array([[1, -1, 0, 0], [-1, 2, -1, 0], [0, -1, 2, -1], [0, 0, -1, 1]], dtype=complex) * 5
+Y_complex = np.array([[2.0 + 0.5j, -1.0 - 0.2j, 0.0 + 0.0j, 0.0 + 0.0j], [-1.0 - 0.2j, 2.5 + 0.3j, -1.2 - 0.1j, 0.0 + 0.0j],
+                      [0.0 + 0.0j, -1.2 - 0.1j, 2.3 + 0.4j, -1.1 - 0.3j], [0.0 + 0.0j, 0.0 + 0.0j, -1.1 - 0.3j, 1.8 + 0.2j]], dtype=complex) * 3
+
+# 🎯 TESTING BOTH CASES
+TEST_COMPLEX_Y = True  # Set to True to test complex Y matrix
+
+if TEST_COMPLEX_Y:
+    Y = Y_complex
+    print("🔬 USING COMPLEX Y MATRIX - General electrical networks")
+else:
+    Y = Y_real
+    print("🔬 USING REAL Y MATRIX - Urban/rural networks")
+
+V = np.array([1, 1.1, 0.95, 0.9])  # Real power reference (can be complex in future)
 num_qubits = 2  # Number of qubits per register
 total_wires = 2 * num_qubits + 1
 
@@ -360,7 +375,7 @@ ansatzes = {  # Original VPFS ansätze
 # Dictionary of available optimizers (VQLS + VPFS combined)
 optimizers_vpfs = {"basic": "Basic finite difference gradient descent", "analytic": "Analytic gradient with PennyLane autodiff",
                    "sequential": "Sequential parameter optimization", "cobyla": "COBYLA constrained optimization",
-                   "adam": "Adam optimizer with PyTorch", # VQLS optimizers added
+                   "adam": "Adam optimizer with PyTorch",  # VQLS optimizers added
                    "nesterov": "Nesterov Momentum Optimizer", "rmsprop": "RMSProp Optimizer", "adagrad": "Adagrad Optimizer",
                    "momentum": "Momentum Optimizer", "sgd": "Stochastic Gradient Descent", "spsa": "SPSA Optimizer"}
 
@@ -996,6 +1011,82 @@ def plot_vpfs_comparison_results(results):
     return fig
 
 
+def run_complex_y_optimization():
+    """Optimización específica para matrices Y complejas."""
+
+    print("🚀 COMPLEX Y OPTIMIZATION STRATEGIES")
+    print("=" * 60)
+
+    # Estrategias para mejorar rendimiento con Y compleja
+    strategies = [  # Estrategia 1: Más iteraciones y tolerancia más estricta
+        ("cobyla", "complex_z", 0.05, 4000, 1e-10, "More Iterations + Strict Tolerance"),
+
+        # Estrategia 2: Learning rate más conservador
+        ("cobyla", "complex_z", 0.01, 2000, 1e-9, "Conservative Learning Rate"),
+
+        # Estrategia 3: Inicialización múltiple (simulando multi-start)
+        ("cobyla", "complex_z", 0.05, 2000, 1e-9, "Different Seed", 42), ("cobyla", "complex_z", 0.05, 2000, 1e-9, "Different Seed", 123),
+
+        # Estrategia 4: Optimizador diferente
+        ("adam", "complex_z", 0.005, 3000, 1e-9, "Adam with Complex Y"),
+
+        # Estrategia 5: Ansatz más expresivo para manejar complejidad
+        ("cobyla", "eigenvalue_specific", 0.05, 2000, 1e-9, "Eigenvalue-Specific Ansatz"), ]
+
+    # Configurar Y compleja
+    globals()['Y'] = Y_complex
+
+    best_quality = 0.536672  # Beat the current complex Y result
+    best_result = None
+
+    print(f"🎯 Goal: Improve Quality > {best_quality:.6f} for Complex Y matrix")
+
+    for i, strategy in enumerate(strategies, 1):
+        if len(strategy) == 6:
+            opt, ans, lr, max_iters_local, tol, desc = strategy
+            seed = rng_seed
+        else:
+            opt, ans, lr, max_iters_local, tol, desc, seed = strategy
+
+        print(f"\n[{i}/6] 🧪 Strategy: {desc}")
+        print(f"     Config: {opt} + {ans} (lr={lr}, seed={seed}, iters={max_iters_local})")
+
+        try:
+            # Temporarily adjust tolerance
+            original_tolerance = globals()['tolerance']
+            globals()['tolerance'] = tol
+
+            result = run_vpfs_optimization(ans, opt, seed, lr=lr, max_iterations=max_iters_local, verbose=False)
+
+            # Restore tolerance
+            globals()['tolerance'] = original_tolerance
+
+            quality = result['solution_quality']
+            loss = result['final_loss']
+            error = result['max_error_V']
+
+            print(f"     📊 Quality: {quality:.6f}, Loss: {loss:.6e}, Error: {error:.6f}")
+
+            if quality > best_quality:
+                improvement = ((quality - best_quality) / best_quality) * 100
+                best_quality = quality
+                best_result = result
+                print(f"     🌟 NEW BEST! (+{improvement:.1f}% improvement)")
+            elif quality > 0.5:
+                print(f"     ✅ Good result")
+            else:
+                print(f"     ⚠️  Below target")
+
+        except Exception as e:
+            print(f"     ❌ Error: {e}")
+
+    return best_result
+
+
+# Add this to the SINGLE_MODE section as an option
+OPTIMIZE_COMPLEX_Y = True  # Set to True to run complex Y optimization strategies
+
+
 def run_vpfs_refinement():
     """Refinement mode for VPFS - find optimal parameters around the winning configuration."""
 
@@ -1016,6 +1107,10 @@ def run_vpfs_refinement():
     refinement_configs = [  # Original winner for reference
         (base_optimizer, base_ansatz, base_lr, "🏆 Original Winner", 2, max_iters),
 
+        # Test with different ansätze but winning optimizer
+        (base_optimizer, "amplitude", base_lr, "COBYLA + Amplitude", 2, max_iters),
+        (base_optimizer, "hardware_efficient", base_lr, "COBYLA + HW", 2, max_iters),
+
         # Test different learning rates around winner
         (base_optimizer, base_ansatz, 0.03, "Lower LR", 2, max_iters), (base_optimizer, base_ansatz, 0.07, "Higher LR", 2, max_iters),
         (base_optimizer, base_ansatz, 0.01, "Conservative LR", 2, max_iters), (base_optimizer, base_ansatz, 0.1, "Aggressive LR", 2, max_iters),
@@ -1035,9 +1130,7 @@ def run_vpfs_refinement():
         (base_optimizer, base_ansatz, base_lr, "Tight Tolerance", 2, max_iters, 1e-10),
         ("analytic", base_ansatz, 0.01, "Analytic + Complex", 2, max_iters),
 
-        # Test with different ansätze but winning optimizer
-        (base_optimizer, "amplitude", base_lr, "COBYLA + Amplitude", 2, max_iters),
-        (base_optimizer, "hardware_efficient", base_lr, "COBYLA + HW", 2, max_iters), ]
+    ]
 
     best_quality = 0.848  # Beat the current winner
     best_overall = None
@@ -1106,7 +1199,8 @@ def save_vpfs_results(result, comparison_data, mode="single"):
                                          "converged": result["converged"], "optimization_time": result["optimization_time"]},
                         "comparison": comparison_data,
                         "configuration": {"num_qubits": num_qubits, "max_iters": max_iters, "tolerance": tolerance, "Y_matrix": Y.tolist(),
-                                          "V_target": V.tolist()}}
+                                          "Y_matrix_type": "complex" if np.any(np.imag(Y) != 0) else "real", "V_target": V.tolist(),
+                                          "complex_Y_test": TEST_COMPLEX_Y}}
 
     # Determine filename based on mode
     if mode == "refinement":
@@ -1180,93 +1274,127 @@ if __name__ == "__main__":
             print("No successful results obtained.")
 
     elif SINGLE_MODE:
-        # Individual experiment - ADVANCED ANSÄTZE COMPETITION 🚀
-        print("🎯 SINGLE EXPERIMENT MODE - ADVANCED ANSÄTZE COMPETITION")
-        print("🎯 Goal: Beat the current champion (Quality: 0.848537)")
+        # Individual experiment - COMPLEX Y MATRIX TEST 🔬
+        print("🎯 SINGLE EXPERIMENT MODE - COMPLEX Y MATRIX TEST")
+        print("🔬 Goal: Test performance with COMPLEX Y matrix (general networks)")
 
-        # Test advanced ansätze against the current winner
-        advanced_configs = [  # Current champion for reference
-            ("cobyla", "complex_z", 0.05, "🏆 Current Champion"),
+        # Test both cases for comparison
+        test_cases = [(Y_real, "REAL Y Matrix", "Urban/rural networks (Y almost real)"),
+                      (Y_complex, "COMPLEX Y Matrix", "General electrical networks (Y complex)")]
 
-            # 🚀 NEW ADVANCED ANSÄTZE with winning optimizer
-            ("cobyla", "deep_layered", 0.05, "🚀 Deep Layered (4 layers)"), ("cobyla", "all_to_all", 0.05, "🚀 All-to-All Connectivity"),
-            ("cobyla", "eigenvalue_specific", 0.05, "🚀 Eigenvalue-Specific Design"), ("cobyla", "expressiv_hybrid", 0.05, "🚀 Expressive Hybrid"),
+        best_results = []
 
-            # Test with runner-up optimizer too
-            ("adam", "deep_layered", 0.01, "Adam + Deep Layered"), ("adam", "eigenvalue_specific", 0.01, "Adam + Eigenvalue"),
-            ("adam", "expressiv_hybrid", 0.01, "Adam + Hybrid"),
+        for i, (Y_matrix, case_name, description) in enumerate(test_cases, 1):
+            print(f"\n{'=' * 60}")
+            print(f"🔬 CASE {i}/2: {case_name}")
+            print(f"📋 Description: {description}")
+            print(f"📊 Y Matrix sample: Y[0,0] = {Y_matrix[0, 0]:.3f}, Y[1,0] = {Y_matrix[1, 0]:.3f}")
+            print(f"{'=' * 60}")
 
-            # Test with standard VQLS ansätze
-            ("cobyla", "layered", 0.05, "Standard Layered (2 layers)"), ("cobyla", "complex", 0.05, "VQLS Complex"), ]
+            # Update global Y matrix for this test
+            globals()['Y'] = Y_matrix
 
-        print(f"🧪 Testing {len(advanced_configs)} advanced configurations...")
-        print("📊 Parameter counts:")
-        for _, ans, _, desc in advanced_configs[:5]:  # Show first 5
-            n_params = ansatzes[ans]["n_params"]()
-            print(f"   {ans}: {n_params} parameters")
-
-        best_result = None
-        best_quality = 0.848537  # Beat the current champion
-        all_results = []
-
-        for i, (opt, ans, lr, desc) in enumerate(advanced_configs, 1):
-            print(f"\n[{i:2d}/{len(advanced_configs)}] 🧪 {desc}")
-            print(f"     Config: {opt} + {ans} (lr={lr})")
+            # Test winning configuration with this Y matrix
+            print(f"🏆 Testing CHAMPION: cobyla + amplitude")
 
             try:
-                # Show parameter count
-                n_params = ansatzes[ans]["n_params"]()
-                print(f"     Parameters: {n_params}")
+                result = run_vpfs_optimization("amplitude", "cobyla", rng_seed, lr=0.05, verbose=True)
 
-                result = run_vpfs_optimization(ans, opt, rng_seed, lr=lr, verbose=False)
                 quality = result['solution_quality']
                 loss = result['final_loss']
                 error = result['max_error_V']
 
-                print(f"     📊 Quality: {quality:.6f}, Loss: {loss:.6e}, Error: {error:.6f}")
+                print(f"\n📊 RESULTS for {case_name}:")
+                print(f"   Quality: {quality:.6f}")
+                print(f"   Loss: {loss:.6e}")
+                print(f"   Max Error: {error:.6f}")
 
-                all_results.append(result)
+                # Store result with case info
+                result['case_name'] = case_name
+                result['Y_matrix_type'] = "complex" if np.any(np.imag(Y_matrix) != 0) else "real"
+                result['Y_matrix'] = Y_matrix.tolist()
+                best_results.append(result)
 
-                if quality > best_quality:
-                    improvement = ((quality - best_quality) / best_quality) * 100
-                    best_quality = quality
-                    best_result = result
-                    print(f"     🌟 NEW CHAMPION! (+{improvement:.1f}% improvement)")
-                elif quality > 0.8:
-                    print(f"     ✅ Excellent result")
+                if quality > 0.8:
+                    print(f"   ✅ EXCELLENT performance with {case_name}")
                 elif quality > 0.7:
-                    print(f"     ✅ Good result")
+                    print(f"   ✅ GOOD performance with {case_name}")
                 else:
-                    print(f"     ⚠️  Below expectations")
+                    print(f"   ⚠️  MODERATE performance with {case_name}")
 
             except Exception as e:
-                print(f"     ❌ Error: {e}")
+                print(f"   ❌ Error with {case_name}: {e}")
+                continue
 
-        # Results summary
-        print(f"\n" + "=" * 60)
-        print("🏆 ADVANCED ANSÄTZE COMPETITION RESULTS")
-        print("=" * 60)
+        # Comparison results
+        if len(best_results) >= 2:
+            print(f"\n" + "=" * 60)
+            print("🔬 COMPLEX Y MATRIX ANALYSIS")
+            print("=" * 60)
 
-        # Sort results by quality
-        all_results.sort(key=lambda x: x['solution_quality'], reverse=True)
+            real_result = best_results[0]
+            complex_result = best_results[1]
 
-        print(f"\n📊 RANKING (Top 5):")
-        for i, res in enumerate(all_results[:5], 1):
-            emoji = "🏆" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else "✅"
-            print(f"  {emoji} {i}. {res['optimizer']} + {res['ansatz']}: {res['solution_quality']:.6f}")
+            print(f"\n📊 PERFORMANCE COMPARISON:")
+            print(f"   Real Y Matrix:")
+            print(f"     Quality: {real_result['solution_quality']:.6f}")
+            print(f"     Loss: {real_result['final_loss']:.6e}")
+            print(f"     Max Error: {real_result['max_error_V']:.6f}")
 
-        if best_result and best_result['solution_quality'] > 0.848537:
-            print(f"\n🎉 NEW CHAMPION FOUND!")
-            print(f"   Configuration: {best_result['optimizer']} + {best_result['ansatz']}")
-            print(f"   Quality: {best_result['solution_quality']:.6f} (vs 0.848537)")
-            print(f"   Improvement: {((best_result['solution_quality'] - 0.848537) / 0.848537) * 100:.1f}%")
-            result = best_result
+            print(f"   Complex Y Matrix:")
+            print(f"     Quality: {complex_result['solution_quality']:.6f}")
+            print(f"     Loss: {complex_result['final_loss']:.6e}")
+            print(f"     Max Error: {complex_result['max_error_V']:.6f}")
+
+            # Calculate performance change
+            quality_change = ((complex_result['solution_quality'] - real_result['solution_quality']) / real_result['solution_quality']) * 100
+
+            print(f"\n🎯 IMPACT OF COMPLEX Y MATRIX:")
+            if abs(quality_change) < 5:
+                print(f"   📊 MINIMAL IMPACT: {quality_change:+.1f}% quality change")
+                print(f"   ✅ Algorithm handles complex Y matrices well!")
+            elif quality_change > 0:
+                print(f"   📈 IMPROVEMENT: {quality_change:+.1f}% quality increase")
+                print(f"   🎉 Complex Y actually helps performance!")
+            else:
+                print(f"   📉 DEGRADATION: {quality_change:+.1f}% quality decrease")
+                print(f"   ⚠️  Complex Y makes problem more challenging")
+
+            # Choose best result for final analysis
+            if complex_result['solution_quality'] >= real_result['solution_quality']:
+                result = complex_result
+                print(f"\n🏆 USING COMPLEX Y RESULT for final analysis")
+            else:
+                result = real_result
+                print(f"\n🏆 USING REAL Y RESULT for final analysis")
+
+            # 🚀 AUTOMATIC COMPLEX Y OPTIMIZATION
+            if complex_result['solution_quality'] < 0.7:  # If complex Y performance is below threshold
+                print(f"\n" + "🚀" * 20)
+                print("🚀 AUTOMATIC COMPLEX Y OPTIMIZATION ACTIVATED")
+                print("🎯 Goal: Improve Complex Y performance to >0.7 quality")
+                print("🚀" * 60)
+
+                optimized_result = run_complex_y_optimization()
+
+                if optimized_result and optimized_result['solution_quality'] > complex_result['solution_quality']:
+                    improvement = ((optimized_result['solution_quality'] - complex_result['solution_quality']) / complex_result[
+                        'solution_quality']) * 100
+                    print(f"\n🎉 COMPLEX Y OPTIMIZATION SUCCESSFUL!")
+                    print(f"   Improved Quality: {complex_result['solution_quality']:.6f} → {optimized_result['solution_quality']:.6f}")
+                    print(f"   Improvement: +{improvement:.1f}%")
+
+                    # Update result if significantly better
+                    if optimized_result['solution_quality'] > result['solution_quality']:
+                        result = optimized_result
+                        print(f"   🏆 NEW OVERALL CHAMPION!")
+                else:
+                    print(f"\n⚠️ Complex Y optimization did not find significant improvement")
+                    print(f"   Consider: Different problem formulation or advanced techniques")
+
         else:
-            print(f"\n🛡️ CHAMPION DEFENDED!")
-            print(f"   No ansatz beat the current champion (0.848537)")
-            print(f"   Best new result: {all_results[0]['solution_quality']:.6f}")
-            # Use the current champion result
-            result = run_vpfs_optimization("complex_z", "cobyla", rng_seed, lr=0.05)
+            print("\n❌ Could not complete comparison")
+            result = best_results[0] if best_results else None
 
         # Show convergence
         if len(result["loss_history"]) > 1:
