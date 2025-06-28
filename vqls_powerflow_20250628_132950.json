@@ -1,0 +1,47 @@
+{
+  "timestamp": "2025-06-28 13:29:50",
+  "problem": {
+    "type": "power_flow",
+    "n_buses": 2,
+    "formulations": [
+      "complex",
+      "rectangular"
+    ]
+  },
+  "results": {
+    "complex": {
+      "final_cost": 0.0,
+      "elapsed_time": 0.9633643627166748,
+      "n_params": 4,
+      "cost_history_final": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    "rectangular": {
+      "final_cost": 0.0,
+      "elapsed_time": 1.1998186111450195,
+      "n_params": 4,
+      "cost_history_final": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    }
+  }
+}
