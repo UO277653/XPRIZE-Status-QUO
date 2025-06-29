@@ -1,10 +1,3 @@
-# VPFS (Variational Parametric Feedback System) Experimental Suite
-# Inspirado en la estructura del VQLS pero usando el algoritmo VPFS
-# 🎯 INCLUDES VQLS OPTIMIZERS & ANSÄTZE - Try the winning combo: nesterov + hardware_efficient!
-# 🏆 Best VQLS config: nesterov + hardware_efficient (seed=2, lr=0.4, steps=2000)
-# 🔬 NOW TESTING: Complex Y matrices for general electrical networks!
-# 🚀 UPGRADED: Using well-conditioned Y matrices for >99% solution quality!
-
 import os
 
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
@@ -30,10 +23,9 @@ import warnings
 #
 
 # VPFS Problem parameters
-# 🚀 MATRICES Y BIEN CONDICIONADAS - ¡Calidad >99%!
-print("🚀 USING WELL-CONDITIONED Y MATRICES - Quality >99% achievable!")
+print("🚀 USING WELL-CONDITIONED Y MATRICES")
 
-# Opción 1: Matriz regularizada (tu matriz original pero arreglada)
+# Opción 1: Matriz regularizada
 Y_real = np.array([[1, -1, 0, 0], [-1, 2, -1, 0], [0, -1, 2, -1], [0, 0, -1, 1]], dtype=complex)
 regularization = 0.1  # Añadir regularización para mejorar condicionamiento
 Y_real = Y_real + regularization * np.eye(4)  # Condition number ~35 (BUENO)
@@ -48,8 +40,8 @@ Y_complex = (Q @ D @ Q.T).astype(complex)  # Condition number ~2.67 (EXCELENTE)
 # Añadir pequeña parte imaginaria para versión compleja
 Y_complex = Y_complex + 1j * Y_complex * 0.05  # 5% de complejidad
 
-print(f"📊 Y_real condition number: {np.linalg.cond(Y_real):.1f} (Expected quality: 0.999+)")
-print(f"📊 Y_complex condition number: {np.linalg.cond(Y_complex):.1f} (Expected quality: 0.999+)")
+print(f"📊 Y_real condition number: {np.linalg.cond(Y_real):.1f}")
+print(f"📊 Y_complex condition number: {np.linalg.cond(Y_complex):.1f}")
 
 # 🎯 TESTING BOTH CASES
 TEST_COMPLEX_Y = True  # Set to True to test complex Y matrix
@@ -66,22 +58,22 @@ num_qubits = 2  # Number of qubits per register
 total_wires = 2 * num_qubits + 1
 
 # Optimization parameters
-max_iters = 2000  # Updated to match VQLS best config
+max_iters = 2000
 tolerance = 1e-9  # Convergence tolerance
-learning_rate = 0.4  # Updated to match VQLS best config (was 0.05)
+learning_rate = 0.4
 radius = 0.1  # Parameter for amplitude ansatz
 PEN_COEF_SCALE = 0.0  # Penalty coefficient scale
-loss_option = 4  # Loss option (from original VPFS)
+loss_option = 4
 
 # Experimental configuration
-rng_seed = 2  # Updated to match VQLS best config (was 42)
+rng_seed = 2
 N_RANDOM_SEEDS = 3  # Number of random seeds per configuration
 
 # --------------------------------------------------------------------------
 # EXECUTION MODES
 MULTIPLE_RUNS = False  # For systematic comparison
-SINGLE_MODE = True  # For individual experiment - Testing ADVANCED ANSÄTZE 🚀
-REFINEMENT_MODE = False  # For refining best configuration
+SINGLE_MODE = False  # For individual experiment
+REFINEMENT_MODE = True  # For refining best configuration
 TURBO_MODE = False  # For high-speed parallel experiments
 # --------------------------------------------------------------------------
 
@@ -184,210 +176,13 @@ def ansatz_complex_z(params, wires):
         param_idx += 1
 
 
-# VQLS Ansätze adapted for VPFS
-def ansatz_hardware_efficient(params, wires):
-    """Hardware-efficient ansatz from VQLS (adapted for VPFS)."""
-    n = len(wires)
-    assert len(params) == 2 * n, f"Expected {2 * n} parameters for hardware_efficient, got {len(params)}"
-
-    idx = 0
-    # First RY layer
-    for w in wires:
-        qml.RY(params[idx], wires=w)
-        idx += 1
-
-    # Entanglement layer
-    for i in range(n - 1):
-        qml.CNOT(wires=[wires[i], wires[i + 1]])
-
-    # Second RY layer
-    for w in wires:
-        qml.RY(params[idx], wires=w)
-        idx += 1
-
-
-def ansatz_layered(params, wires, n_layers=2):
-    """Layered ansatz from VQLS (adapted for VPFS)."""
-    n = len(wires)
-    params_per_layer = 3 * n
-    assert len(params) == params_per_layer * n_layers, f"Expected {params_per_layer * n_layers} params for layered ansatz, got {len(params)}"
-
-    idx = 0
-    for layer in range(n_layers):
-        # Rotation layer
-        for w in wires:
-            theta, phi, lam = params[idx], params[idx + 1], params[idx + 2]
-            qml.Rot(theta, phi, lam, wires=w)
-            idx += 3
-
-        # Entanglement layer (varies by layer)
-        if layer % 2 == 0:
-            # Linear entanglement
-            for i in range(n - 1):
-                qml.CNOT(wires=[wires[i], wires[i + 1]])
-        else:
-            # Circular entanglement
-            for i in range(n):
-                qml.CNOT(wires=[wires[i], wires[(i + 1) % n]])
-
-
-def ansatz_complex_vqls(params, wires):
-    """Complex ansatz from VQLS (adapted for VPFS)."""
-    n = len(wires)
-    assert len(params) == 3 * n, f"Expected {3 * n} parameters for complex ansatz, got {len(params)}"
-
-    idx = 0
-    # Initial Hadamard layer
-    for w in wires:
-        qml.Hadamard(wires=w)
-
-    # Full Rot layer (more expressive than just RY)
-    for w in wires:
-        theta, phi, lam = params[idx], params[idx + 1], params[idx + 2]
-        qml.Rot(theta, phi, lam, wires=w)
-        idx += 3
-
-    # Entanglement
-    for i in range(n - 1):
-        qml.CNOT(wires=[wires[i], wires[i + 1]])
-
-
-# 🚀 NEW ADVANCED ANSÄTZE FOR VPFS
-def ansatz_deep_layered(params, wires, n_layers=4):
-    """Deep layered ansatz with 4+ layers for maximum expressivity."""
-    n = len(wires)
-    params_per_layer = 3 * n
-    assert len(params) == params_per_layer * n_layers, f"Expected {params_per_layer * n_layers} params for deep layered, got {len(params)}"
-
-    idx = 0
-    for layer in range(n_layers):
-        # Rotation layer with full Rot gates
-        for w in wires:
-            theta, phi, lam = params[idx], params[idx + 1], params[idx + 2]
-            qml.Rot(theta, phi, lam, wires=w)
-            idx += 3
-
-        # Different entanglement patterns per layer
-        if layer % 4 == 0:
-            # Linear entanglement
-            for i in range(n - 1):
-                qml.CNOT(wires=[wires[i], wires[i + 1]])
-        elif layer % 4 == 1:
-            # Circular entanglement
-            for i in range(n):
-                qml.CNOT(wires=[wires[i], wires[(i + 1) % n]])
-        elif layer % 4 == 2:
-            # All-to-all entanglement (for small n_qubits)
-            for i in range(n):
-                for j in range(i + 1, n):
-                    qml.CNOT(wires=[wires[i], wires[j]])
-        else:
-            # Reverse linear
-            for i in range(n - 1, 0, -1):
-                qml.CNOT(wires=[wires[i], wires[i - 1]])
-
-
-def ansatz_all_to_all(params, wires):
-    """All-to-all connectivity ansatz for maximum entanglement."""
-    n = len(wires)
-    # 3 params per qubit + 1 param per CNOT pair
-    n_cnot_pairs = n * (n - 1) // 2
-    expected_params = 3 * n + n_cnot_pairs
-    assert len(params) == expected_params, f"Expected {expected_params} params for all-to-all, got {len(params)}"
-
-    idx = 0
-
-    # Initial rotation layer
-    for w in wires:
-        theta, phi, lam = params[idx], params[idx + 1], params[idx + 2]
-        qml.Rot(theta, phi, lam, wires=w)
-        idx += 3
-
-    # All-to-all entanglement with parameterized rotation
-    for i in range(n):
-        for j in range(i + 1, n):
-            # Parameterized CNOT with RZ rotation
-            qml.RZ(params[idx], wires=wires[i])
-            qml.CNOT(wires=[wires[i], wires[j]])
-            idx += 1
-
-
-def ansatz_eigenvalue_specific(params, wires):
-    """Ansatz specifically designed for eigenvalue problems like VPFS."""
-    n = len(wires)
-    assert len(params) == 4 * n, f"Expected {4 * n} params for eigenvalue-specific, got {len(params)}"
-
-    idx = 0
-
-    # Layer 1: State preparation with emphasis on phase
-    for w in wires:
-        qml.RY(params[idx], wires=w)  # Amplitude
-        qml.RZ(params[idx + 1], wires=w)  # Phase
-        idx += 2
-
-    # Entanglement suited for eigenvalue structure
-    for i in range(n - 1):
-        qml.CNOT(wires=[wires[i], wires[i + 1]])
-
-    # Layer 2: Fine-tuning with controlled rotations
-    for w in wires:
-        qml.RX(params[idx], wires=w)  # X rotation for eigenvalue sensitivity
-        qml.RZ(params[idx + 1], wires=w)  # Z rotation for phase adjustment
-        idx += 2
-
-    # Final circular entanglement
-    if n > 1:
-        qml.CNOT(wires=[wires[-1], wires[0]])
-
-
-def ansatz_expressiv_hybrid(params, wires):
-    """Hybrid ansatz combining best features for VPFS."""
-    n = len(wires)
-    assert len(params) == 5 * n, f"Expected {5 * n} params for expressiv hybrid, got {len(params)}"
-
-    idx = 0
-
-    # Initial superposition
-    for w in wires:
-        qml.Hadamard(wires=w)
-
-    # First parametric layer (amplitude and phase)
-    for w in wires:
-        qml.RY(params[idx], wires=w)
-        qml.RZ(params[idx + 1], wires=w)
-        idx += 2
-
-    # First entanglement
-    for i in range(n - 1):
-        qml.CNOT(wires=[wires[i], wires[i + 1]])
-
-    # Second parametric layer (full rotation)
-    for w in wires:
-        theta, phi, lam = params[idx], params[idx + 1], params[idx + 2]
-        qml.Rot(theta, phi, lam, wires=w)
-        idx += 3
-
-    # Circular entanglement for global correlations
-    for i in range(n):
-        qml.CNOT(wires=[wires[i], wires[(i + 1) % n]])
-
-
-# Dictionary of available ansätze (VQLS + VPFS + NEW ADVANCED)
+# Dictionary of available ansätze
 n_layers = 2  # For standard layered ansatz
-n_layers_deep = 4  # For deep layered ansatz
 
 ansatzes = {  # Original VPFS ansätze
     "amplitude": {"n_params": lambda: 2 ** num_qubits - 1, "description": "Amplitude embedding ansatz"},
     "variational_block": {"n_params": lambda: 2 ** num_qubits - 1, "description": "Variational block with entanglement"},
-    "complex_z": {"n_params": lambda: 2 * num_qubits, "description": "Complex ansatz with RZ rotations 🏆 WINNER"},  # VQLS ansätze added
-    "hardware_efficient": {"n_params": lambda: 2 * num_qubits, "description": "Hardware-efficient ansatz from VQLS"},
-    "layered": {"n_params": lambda: 3 * num_qubits * n_layers, "description": "Layered ansatz with multiple entanglement patterns"},
-    "complex": {"n_params": lambda: 3 * num_qubits, "description": "Complex ansatz from VQLS with Rot gates"},  # 🚀 NEW ADVANCED ANSÄTZE
-    "deep_layered": {"n_params": lambda: 3 * num_qubits * n_layers_deep, "description": "🚀 Deep layered ansatz (4 layers, max expressivity)"},
-    "all_to_all": {"n_params": lambda: 3 * num_qubits + (num_qubits * (num_qubits - 1) // 2),
-                   "description": "🚀 All-to-all connectivity for maximum entanglement"},
-    "eigenvalue_specific": {"n_params": lambda: 4 * num_qubits, "description": "🚀 Designed specifically for eigenvalue problems"},
-    "expressiv_hybrid": {"n_params": lambda: 5 * num_qubits, "description": "🚀 Hybrid ansatz combining best features"}}
+    "complex_z": {"n_params": lambda: 2 * num_qubits, "description": "Complex ansatz with RZ rotations"}, }
 
 # Dictionary of available optimizers (VQLS + VPFS combined)
 optimizers_vpfs = {"basic": "Basic finite difference gradient descent", "analytic": "Analytic gradient with PennyLane autodiff",
@@ -460,21 +255,7 @@ def run_vpfs_optimization(ansatz_name, optimizer_name, seed, lr=None, max_iterat
             ansatz_complex_z(params, range(num_qubits))
         elif option_ansatz == 'variational_block':
             ansatz_variational_block(params, num_qubits)
-        elif option_ansatz == 'hardware_efficient':
-            ansatz_hardware_efficient(params, range(num_qubits))
-        elif option_ansatz == 'layered':
-            ansatz_layered(params, range(num_qubits), n_layers)
-        elif option_ansatz == 'complex':
-            ansatz_complex_vqls(params, range(num_qubits))
-        # 🚀 NEW ADVANCED ANSÄTZE
-        elif option_ansatz == 'deep_layered':
-            ansatz_deep_layered(params, range(num_qubits), n_layers_deep)
-        elif option_ansatz == 'all_to_all':
-            ansatz_all_to_all(params, range(num_qubits))
-        elif option_ansatz == 'eigenvalue_specific':
-            ansatz_eigenvalue_specific(params, range(num_qubits))
-        elif option_ansatz == 'expressiv_hybrid':
-            ansatz_expressiv_hybrid(params, range(num_qubits))
+
         return qml.state()
 
     # Main quantum circuits
@@ -828,7 +609,7 @@ def run_systematic_comparison():
 
     # Include VQLS optimizers + new advanced ansätze in systematic comparison
     optimizer_list = ["basic", "analytic", "cobyla", "adam", "nesterov", "rmsprop", "adagrad"]
-    ansatz_list = ["amplitude", "complex_z", "hardware_efficient", "layered", "complex", "deep_layered", "eigenvalue_specific", "expressiv_hybrid"]
+    ansatz_list = ["amplitude", "complex_z"]
 
     all_results = []
 
@@ -1028,78 +809,6 @@ def plot_vpfs_comparison_results(results):
     return fig
 
 
-def run_complex_y_optimization():
-    """Optimización específica para matrices Y complejas."""
-
-    print("🚀 COMPLEX Y OPTIMIZATION STRATEGIES")
-    print("=" * 60)
-
-    # Estrategias para mejorar rendimiento con Y compleja
-    strategies = [  # Estrategia 1: Más iteraciones y tolerancia más estricta
-        ("cobyla", "complex_z", 0.05, 4000, 1e-10, "More Iterations + Strict Tolerance"),
-
-        # Estrategia 2: Learning rate más conservador
-        ("cobyla", "complex_z", 0.01, 2000, 1e-9, "Conservative Learning Rate"),
-
-        # Estrategia 3: Inicialización múltiple (simulando multi-start)
-        ("cobyla", "complex_z", 0.05, 2000, 1e-9, "Different Seed", 42), ("cobyla", "complex_z", 0.05, 2000, 1e-9, "Different Seed", 123),
-
-        # Estrategia 4: Optimizador diferente
-        ("adam", "complex_z", 0.005, 3000, 1e-9, "Adam with Complex Y"),
-
-        # Estrategia 5: Ansatz más expresivo para manejar complejidad
-        ("cobyla", "eigenvalue_specific", 0.05, 2000, 1e-9, "Eigenvalue-Specific Ansatz"), ]
-
-    # Configurar Y compleja
-    globals()['Y'] = Y_complex
-
-    best_quality = 0.536672  # Beat the current complex Y result
-    best_result = None
-
-    print(f"🎯 Goal: Improve Quality > {best_quality:.6f} for Complex Y matrix")
-
-    for i, strategy in enumerate(strategies, 1):
-        if len(strategy) == 6:
-            opt, ans, lr, max_iters_local, tol, desc = strategy
-            seed = rng_seed
-        else:
-            opt, ans, lr, max_iters_local, tol, desc, seed = strategy
-
-        print(f"\n[{i}/6] 🧪 Strategy: {desc}")
-        print(f"     Config: {opt} + {ans} (lr={lr}, seed={seed}, iters={max_iters_local})")
-
-        try:
-            # Temporarily adjust tolerance
-            original_tolerance = globals()['tolerance']
-            globals()['tolerance'] = tol
-
-            result = run_vpfs_optimization(ans, opt, seed, lr=lr, max_iterations=max_iters_local, verbose=False)
-
-            # Restore tolerance
-            globals()['tolerance'] = original_tolerance
-
-            quality = result['solution_quality']
-            loss = result['final_loss']
-            error = result['max_error_V']
-
-            print(f"     📊 Quality: {quality:.6f}, Loss: {loss:.6e}, Error: {error:.6f}")
-
-            if quality > best_quality:
-                improvement = ((quality - best_quality) / best_quality) * 100
-                best_quality = quality
-                best_result = result
-                print(f"     🌟 NEW BEST! (+{improvement:.1f}% improvement)")
-            elif quality > 0.5:
-                print(f"     ✅ Good result")
-            else:
-                print(f"     ⚠️  Below target")
-
-        except Exception as e:
-            print(f"     ❌ Error: {e}")
-
-    return best_result
-
-
 # Add this to the SINGLE_MODE section as an option
 OPTIMIZE_COMPLEX_Y = True  # Set to True to run complex Y optimization strategies
 
@@ -1113,43 +822,19 @@ def run_vpfs_refinement():
 
     # Use the winning configuration as base: cobyla + complex_z
     base_optimizer = "cobyla"  # Winner!
-    base_ansatz = "complex_z"  # Winner!
+    base_ansatz = "shallow_hardware"  # Winner!
     base_lr = 0.05  # Winner!
 
     print(f"🏆 Base configuration (WINNER): {base_optimizer} + {base_ansatz}")
     print(f"   Base learning rate: {base_lr}, Base seed: {rng_seed}")
-    print(f"   Target: Improve quality from 0.848 to >0.9")
 
     # Parameters to test for refinement - focused around winning config
     refinement_configs = [  # Original winner for reference
-        (base_optimizer, base_ansatz, base_lr, "🏆 Original Winner", 2, max_iters),
-
-        # Test with different ansätze but winning optimizer
-        (base_optimizer, "amplitude", base_lr, "COBYLA + Amplitude", 2, max_iters),
-        (base_optimizer, "hardware_efficient", base_lr, "COBYLA + HW", 2, max_iters),
-
-        # Test different learning rates around winner
-        (base_optimizer, base_ansatz, 0.03, "Lower LR", 2, max_iters), (base_optimizer, base_ansatz, 0.07, "Higher LR", 2, max_iters),
-        (base_optimizer, base_ansatz, 0.01, "Conservative LR", 2, max_iters), (base_optimizer, base_ansatz, 0.1, "Aggressive LR", 2, max_iters),
-
-        # Test more iterations with best LR
-        (base_optimizer, base_ansatz, base_lr, "More Iters", 2, 3000), (base_optimizer, base_ansatz, base_lr, "Many Iters", 2, 4000),
-
-        # Test different seeds with winning config
-        (base_optimizer, base_ansatz, base_lr, "Seed 1", 1, max_iters), (base_optimizer, base_ansatz, base_lr, "Seed 3", 3, max_iters),
-        (base_optimizer, base_ansatz, base_lr, "Seed 5", 5, max_iters), (base_optimizer, base_ansatz, base_lr, "Seed 42", 42, max_iters),
-
-        # Test second-best performer: adam + complex_z
-        ("adam", base_ansatz, 0.01, "🥈 Adam Runner-up", 2, max_iters), ("adam", base_ansatz, 0.005, "Adam Conservative", 2, max_iters),
-        ("adam", base_ansatz, 0.02, "Adam Aggressive", 2, max_iters),
-
-        # Test hybrid approaches
-        (base_optimizer, base_ansatz, base_lr, "Tight Tolerance", 2, max_iters, 1e-10),
-        ("analytic", base_ansatz, 0.01, "Analytic + Complex", 2, max_iters),
+        (base_optimizer, base_ansatz, base_lr, "🏆 Baseline", 2, max_iters),
 
     ]
 
-    best_quality = 0.848  # Beat the current winner
+    best_quality = 0  # Beat the current winner
     best_overall = None
     all_refined_results = []
 
@@ -1291,7 +976,7 @@ if __name__ == "__main__":
             print("No successful results obtained.")
 
     elif SINGLE_MODE:
-        # Individual experiment - COMPLEX Y MATRIX TEST 🔬
+        # Individual experiment
         print("🎯 SINGLE EXPERIMENT MODE - WELL-CONDITIONED Y MATRIX TEST")
         print("🚀 Goal: Achieve >99% solution quality with well-conditioned matrices")
 
@@ -1312,11 +997,8 @@ if __name__ == "__main__":
             # Update global Y matrix for this test
             globals()['Y'] = Y_matrix
 
-            # Test winning configuration with this Y matrix
-            print(f"🏆 Testing CHAMPION: cobyla + amplitude")
-
             try:
-                result = run_vpfs_optimization("amplitude", "cobyla", rng_seed, lr=0.05, verbose=True)
+                result = run_vpfs_optimization("shallow_hardware", "cobyla", rng_seed, lr=0.05, verbose=True)
 
                 quality = result['solution_quality']
                 loss = result['final_loss']
