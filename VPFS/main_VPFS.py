@@ -16,7 +16,7 @@ import time
 import warnings
 
 # Suppress complex casting warnings for cleaner output
-# warnings.filterwarnings("ignore", message="Casting complex values to real discards the imaginary part")
+warnings.filterwarnings("ignore", message="Casting complex values to real discards the imaginary part")
 
 #
 # Setting of the main hyper-parameters of the model
@@ -67,13 +67,13 @@ loss_option = 4
 
 # Experimental configuration
 rng_seed = 2
-N_RANDOM_SEEDS = 3  # Number of random seeds per configuration
+N_RANDOM_SEEDS = 5  # Increased for better statistics
 
 # --------------------------------------------------------------------------
 # EXECUTION MODES
 MULTIPLE_RUNS = False  # For systematic comparison
-SINGLE_MODE = False  # For individual experiment
-REFINEMENT_MODE = True  # For refining best configuration
+SINGLE_MODE = False  # For individual experiment with multiple seeds
+REFINEMENT_MODE = True  # For refining best configuration with robustness analysis
 TURBO_MODE = False  # For high-speed parallel experiments
 # --------------------------------------------------------------------------
 
@@ -176,13 +176,44 @@ def ansatz_complex_z(params, wires):
         param_idx += 1
 
 
-# Dictionary of available ansätze
+def ansatz_hardware_efficient(params, wires):
+    """
+    A standard hardware-efficient ansatz with layered rotations and entanglement.
+    Each layer consists of RY rotations on each qubit, followed by a chain of CNOTs.
+    """
+    n_qubits = len(wires)
+    # The number of parameters is expected to be n_layers * n_qubits
+    params_per_layer = n_qubits
+
+    for l in range(n_layers):
+        # Rotation layer
+        for i in range(n_qubits):
+            qml.RY(params[l * params_per_layer + i], wires=wires[i])
+
+        # Entanglement layer (linear chain)
+        for i in range(n_qubits - 1):
+            qml.CNOT(wires=[wires[i], wires[i + 1]])
+
+
+def ansatz_strongly_entangling(params, wires):
+    """A strongly entangling layered ansatz from PennyLane templates."""
+    qml.StronglyEntanglingLayers(weights=params, wires=wires)
+
+
+# Dictionary of available ansätze - CLEANED VERSION
 n_layers = 2  # For standard layered ansatz
 
-ansatzes = {  # Original VPFS ansätze
-    "amplitude": {"n_params": lambda: 2 ** num_qubits - 1, "description": "Amplitude embedding ansatz"},
+ansatzes = {# Original VPFS ansätze
+    "amplitude": {"n_params": lambda: 2 ** num_qubits - 1, "description": "Amplitude embedding ansatz (NOT hardware realistic)"},
     "variational_block": {"n_params": lambda: 2 ** num_qubits - 1, "description": "Variational block with entanglement"},
-    "complex_z": {"n_params": lambda: 2 * num_qubits, "description": "Complex ansatz with RZ rotations"}, }
+    "complex_z": {"n_params": lambda: 2 * num_qubits, "description": "Complex ansatz with RZ rotations"},
+
+    # Hardware-realistic ansätze
+    "hardware_efficient": {"n_params": lambda: n_layers * num_qubits, "description": "Layered hardware-efficient ansatz (RY + CNOT)"},
+    "strongly_entangling": {"n_params": lambda: qml.StronglyEntanglingLayers.shape(n_layers=n_layers, n_wires=num_qubits)[0] *
+                                                qml.StronglyEntanglingLayers.shape(n_layers=n_layers, n_wires=num_qubits)[1] *
+                                                qml.StronglyEntanglingLayers.shape(n_layers=n_layers, n_wires=num_qubits)[2],
+                            "description": "Strongly Entangling Layers ansatz"}}
 
 # Dictionary of available optimizers (VQLS + VPFS combined)
 optimizers_vpfs = {"basic": "Basic finite difference gradient descent", "analytic": "Analytic gradient with PennyLane autodiff",
@@ -255,6 +286,12 @@ def run_vpfs_optimization(ansatz_name, optimizer_name, seed, lr=None, max_iterat
             ansatz_complex_z(params, range(num_qubits))
         elif option_ansatz == 'variational_block':
             ansatz_variational_block(params, num_qubits)
+        elif option_ansatz == 'hardware_efficient':
+            ansatz_hardware_efficient(params, range(num_qubits))
+        elif option_ansatz == 'strongly_entangling':
+            # Reshape is needed because the template expects weights in a specific shape
+            shape = qml.StronglyEntanglingLayers.shape(n_layers=n_layers, n_wires=num_qubits)
+            ansatz_strongly_entangling(params.reshape(shape), wires=range(num_qubits))
 
         return qml.state()
 
@@ -517,8 +554,68 @@ def run_vpfs_optimization(ansatz_name, optimizer_name, seed, lr=None, max_iterat
 
 
 #
-# Experimental Suite Functions (adapted from VQLS)
+# Multi-seed analysis functions
 #
+
+def run_multiseed_analysis(ansatz_name, optimizer_name, num_seeds=5, lr=0.1, max_iterations=1000, verbose=True):
+    """Run multiple seeds and return statistics."""
+
+    print(f"\n🎲 MULTI-SEED ANALYSIS: {ansatz_name} + {optimizer_name}")
+    print(f"Running {num_seeds} seeds with lr={lr}, max_iters={max_iterations}")
+    print("=" * 60)
+
+    results = []
+    qualities = []
+
+    for seed in range(num_seeds):
+        if verbose:
+            print(f"\n--- Seed {seed + 1}/{num_seeds} ---")
+
+        try:
+            result = run_vpfs_optimization(ansatz_name, optimizer_name, seed, lr=lr, max_iterations=max_iterations, verbose=verbose)
+            results.append(result)
+            qualities.append(result['solution_quality'])
+
+            if verbose:
+                print(f"Seed {seed + 1}: Quality = {result['solution_quality']:.4f}, Loss = {result['final_loss']:.2e}")
+
+        except Exception as e:
+            print(f"Seed {seed + 1}: ERROR - {e}")
+            qualities.append(0.0)
+
+    # Calculate statistics
+    if qualities:
+        mean_quality = np.mean(qualities)
+        std_quality = np.std(qualities)
+        min_quality = np.min(qualities)
+        max_quality = np.max(qualities)
+        success_rate = sum(1 for q in qualities if q > 0.6) / len(qualities)  # >60% quality
+        coefficient_of_variation = std_quality / mean_quality if mean_quality > 0 else float('inf')
+
+        stats = {'mean_quality': mean_quality, 'std_quality': std_quality, 'min_quality': min_quality, 'max_quality': max_quality,
+            'range_quality': max_quality - min_quality, 'success_rate': success_rate, 'coefficient_of_variation': coefficient_of_variation,
+            'num_seeds': len(qualities), 'all_qualities': qualities}
+
+        print(f"\n📊 STATISTICAL SUMMARY:")
+        print(f"  Mean Quality: {mean_quality:.4f} ± {std_quality:.4f}")
+        print(f"  Range: [{min_quality:.4f}, {max_quality:.4f}]")
+        print(f"  Success Rate (>60%): {success_rate * 100:.1f}%")
+        print(f"  Coefficient of Variation: {coefficient_of_variation:.3f}")
+
+        # Assess reliability
+        if coefficient_of_variation < 0.15:
+            reliability = "🟢 HIGHLY RELIABLE"
+        elif coefficient_of_variation < 0.3:
+            reliability = "🟡 MODERATELY RELIABLE"
+        else:
+            reliability = "🔴 UNRELIABLE"
+
+        print(f"  Reliability Assessment: {reliability}")
+
+        return results, stats
+    else:
+        return [], {}
+
 
 def calculate_solution_metrics(result):
     """Calculate detailed solution metrics for VPFS result."""
@@ -532,8 +629,8 @@ def calculate_solution_metrics(result):
     component_errors = np.abs(V_target - V_solution)
     relative_error = np.linalg.norm(component_errors) / np.linalg.norm(V_target)
 
-    # Calculate fidelity-like metric
-    fidelity = np.exp(-relative_error)  # Exponential decay with error
+    # Calculate fidelity-like metric (higher is better, 1.0 is perfect)
+    fidelity = np.exp(-relative_error)
 
     return {"fidelity": float(fidelity), "relative_error": float(relative_error), "component_errors": component_errors.tolist(),
             "solution_quality": result["solution_quality"]}
@@ -568,8 +665,12 @@ def compare_vpfs_solutions(result):
     max_error = np.max(errors)
     relative_error = np.linalg.norm(errors) / np.linalg.norm(V_target)
 
+    metrics = calculate_solution_metrics(result)
+    fidelity = metrics['fidelity']
+
     print(f"\nMaximum component error: {max_error:.6f}")
     print(f"Relative error (L2 norm): {relative_error:.6f}")
+    print(f"Fidelity: {fidelity:.6f}")
 
     # Visualization
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
@@ -651,549 +752,248 @@ def run_systematic_comparison():
     return all_results
 
 
-def analyze_and_save_vpfs_results(results):
-    """Analyze and save VPFS experimental results."""
-
-    if not results:
-        print("No results to analyze!")
-        return None, None
-
-    # Find best result overall
-    best_overall = max(results, key=lambda x: x["solution_quality"])
-
+def run_vpfs_refinement():
+    """
+    Hardware-realistic ansatz testing with robust multi-seed analysis.
+    """
     print("\n" + "=" * 60)
-    print("VPFS EXPERIMENTAL RESULTS ANALYSIS")
+    print("🔬 VPFS HARDWARE-REALISTIC ANSÄTZE WITH ROBUSTNESS ANALYSIS")
     print("=" * 60)
 
-    print(f"\nBEST OVERALL CONFIGURATION:")
-    print(f"  Optimizer: {best_overall['optimizer']}")
-    print(f"  Ansatz: {best_overall['ansatz']}")
-    print(f"  Solution Quality: {best_overall['solution_quality']:.6f}")
-    print(f"  Final Loss: {best_overall['final_loss']:.6e}")
-    print(f"  Max Error in V: {best_overall['max_error_V']:.6f}")
-    print(f"  Converged: {best_overall['converged']}")
+    # Focus on hardware-realistic ansätze
+    hardware_ansatze = ["hardware_efficient", "strongly_entangling"]
+    proven_optimizers = ["adam", "cobyla"]
 
-    # Ranking by optimizer
-    print(f"\nRANKING BY OPTIMIZER:")
-    optimizer_stats = {}
-    for result in results:
-        opt = result["optimizer"]
-        if opt not in optimizer_stats:
-            optimizer_stats[opt] = []
-        optimizer_stats[opt].append(result["solution_quality"])
+    print(f"🎯 Goal: Find reliable hardware-realistic ansatz with good average performance")
+    print(f"🧪 Testing {len(hardware_ansatze)} ansätze with {len(proven_optimizers)} optimizers")
+    print(f"📊 Using {N_RANDOM_SEEDS} seeds per configuration for statistical robustness")
 
-    for opt, qualities in sorted(optimizer_stats.items(), key=lambda x: np.mean(x[1]), reverse=True):
-        avg_quality = np.mean(qualities)
-        std_quality = np.std(qualities)
-        print(f"  {opt:12s}: {avg_quality:.6f} ± {std_quality:.6f} (n={len(qualities)})")
+    # First, run amplitude baseline for comparison
+    print(f"\n" + "=" * 60)
+    print("📊 BASELINE: AMPLITUDE ANSATZ (NOT HARDWARE REALISTIC)")
+    print("=" * 60)
 
-    # Ranking by ansatz
-    print(f"\nRANKING BY ANSATZ:")
-    ansatz_stats = {}
-    for result in results:
-        ans = result["ansatz"]
-        if ans not in ansatz_stats:
-            ansatz_stats[ans] = []
-        ansatz_stats[ans].append(result["solution_quality"])
+    amplitude_results, amplitude_stats = run_multiseed_analysis("amplitude", "adam", num_seeds=N_RANDOM_SEEDS, lr=0.1, max_iterations=1000,
+                                                                verbose=False)
 
-    for ans, qualities in sorted(ansatz_stats.items(), key=lambda x: np.mean(x[1]), reverse=True):
-        avg_quality = np.mean(qualities)
-        std_quality = np.std(qualities)
-        print(f"  {ans:18s}: {avg_quality:.6f} ± {std_quality:.6f} (n={len(qualities)})")
+    print(f"\nAmplitude Baseline Statistics:")
+    print(f"  Mean Quality: {amplitude_stats['mean_quality']:.4f} ± {amplitude_stats['std_quality']:.4f}")
+    print(f"  Success Rate: {amplitude_stats['success_rate'] * 100:.1f}%")
+    print(f"  Reliability: CV = {amplitude_stats['coefficient_of_variation']:.3f}")
 
-    # Save results
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"vpfs_comparison_{timestamp}.json"
+    # Test hardware ansätze
+    all_hardware_results = {}
 
-    # Clean results for JSON serialization
-    clean_results = []
-    for result in results:
-        clean_result = {"optimizer": result["optimizer"], "ansatz": result["ansatz"], "seed": result["seed"],
-                        "learning_rate": result["learning_rate"], "solution_quality": result["solution_quality"], "final_loss": result["final_loss"],
-                        "max_error_V": result["max_error_V"], "converged": result["converged"], "optimization_time": result["optimization_time"],
-                        "n_params": result["n_params"]}
-        clean_results.append(clean_result)
+    for ansatz in hardware_ansatze:
+        print(f"\n" + "=" * 60)
+        print(f"🔧 TESTING HARDWARE ANSATZ: {ansatz.upper()}")
+        print("=" * 60)
 
-    experiment_data = {"timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                       "best_overall": {"optimizer": best_overall["optimizer"], "ansatz": best_overall["ansatz"],
-                                        "solution_quality": best_overall["solution_quality"], "final_loss": best_overall["final_loss"],
-                                        "max_error_V": best_overall["max_error_V"], "converged": best_overall["converged"]},
-                       "all_results": clean_results, "summary": {
-            "optimizer_ranking": {opt: {"mean": float(np.mean(qualities)), "std": float(np.std(qualities))} for opt, qualities in
-                                  optimizer_stats.items()},
-            "ansatz_ranking": {ans: {"mean": float(np.mean(qualities)), "std": float(np.std(qualities))} for ans, qualities in ansatz_stats.items()}},
-                       "configuration": {"num_qubits": num_qubits, "max_iters": max_iters, "tolerance": tolerance, "Y_matrix": Y.tolist(),
-                                         "V_target": V.tolist(), "N_RANDOM_SEEDS": N_RANDOM_SEEDS}}
+        best_config = None
+        best_stats = None
+        best_reliability_score = -1
 
-    try:
-        with open(filename, "w") as f:
-            json.dump(experiment_data, f, indent=2, default=str)
-        print(f"\nResults saved to: {filename}")
-    except Exception as e:
-        print(f"\nError saving JSON: {e}")
-        filename = None
+        for optimizer in proven_optimizers:
+            for lr in [0.05, 0.1, 0.15]:  # Test different learning rates
 
-    return best_overall, filename
+                print(f"\n--- Configuration: {optimizer} + lr={lr} ---")
 
+                try:
+                    results, stats = run_multiseed_analysis(ansatz, optimizer, num_seeds=N_RANDOM_SEEDS, lr=lr, max_iterations=1500, verbose=False)
 
-def plot_vpfs_comparison_results(results):
-    """Visualize VPFS comparison results."""
+                    if stats:
+                        # Calculate reliability score: balance of performance and consistency
+                        reliability_score = (stats['mean_quality'] * 0.6 +  # 60% weight on performance
+                                             (1 - stats['coefficient_of_variation']) * 0.4)  # 40% weight on consistency
 
-    if not results:
-        print("No results to plot!")
+                        print(
+                            f"  Results: Mean={stats['mean_quality']:.4f}, CV={stats['coefficient_of_variation']:.3f}, Score={reliability_score:.4f}")
+
+                        if reliability_score > best_reliability_score:
+                            best_reliability_score = reliability_score
+                            best_config = (optimizer, lr)
+                            best_stats = stats
+
+                except Exception as e:
+                    print(f"  ERROR: {e}")
+
+        if best_config:
+            all_hardware_results[ansatz] = {'optimizer': best_config[0], 'lr': best_config[1], 'stats': best_stats,
+                'reliability_score': best_reliability_score}
+
+    # Analysis and comparison
+    print(f"\n" + "=" * 70)
+    print("🏆 HARDWARE ANSÄTZE FINAL RESULTS")
+    print("=" * 70)
+
+    if not all_hardware_results:
+        print("❌ No hardware ansätze produced reliable results")
         return
 
-    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 12))
+    # Compare with amplitude baseline
+    print(f"\n📊 PERFORMANCE COMPARISON:")
+    print(f"{'Ansatz':<20} | {'Mean Quality':<12} | {'Reliability':<12} | {'vs Amplitude':<12}")
+    print("-" * 65)
 
-    # 1. Solution quality by optimizer
-    optimizer_data = {}
-    for result in results:
-        opt = result["optimizer"]
-        if opt not in optimizer_data:
-            optimizer_data[opt] = []
-        optimizer_data[opt].append(result["solution_quality"])
+    # Amplitude baseline
+    print(
+        f"{'Amplitude (baseline)':<20} | {amplitude_stats['mean_quality']:.4f}       | {'CV=' + f'{amplitude_stats['coefficient_of_variation']:.3f}':<12} | {'100.0%':<12}")
 
-    ax1.boxplot(optimizer_data.values(), tick_labels=optimizer_data.keys())
-    ax1.set_title("Solution Quality by Optimizer")
-    ax1.set_ylabel("Solution Quality")
-    ax1.tick_params(axis='x', rotation=45)
-    ax1.grid(True, alpha=0.3)
+    # Hardware results
+    best_hardware_ansatz = None
+    best_hardware_score = -1
 
-    # 2. Solution quality by ansatz
-    ansatz_data = {}
-    for result in results:
-        ans = result["ansatz"]
-        if ans not in ansatz_data:
-            ansatz_data[ans] = []
-        ansatz_data[ans].append(result["solution_quality"])
+    for ansatz, data in all_hardware_results.items():
+        stats = data['stats']
+        vs_amplitude = (stats['mean_quality'] / amplitude_stats['mean_quality']) * 100
+        reliability = f"CV={stats['coefficient_of_variation']:.3f}"
 
-    ax2.boxplot(ansatz_data.values(), tick_labels=ansatz_data.keys())
-    ax2.set_title("Solution Quality by Ansatz")
-    ax2.set_ylabel("Solution Quality")
-    ax2.tick_params(axis='x', rotation=45)
-    ax2.grid(True, alpha=0.3)
+        print(f"{ansatz:<20} | {stats['mean_quality']:.4f}       | {reliability:<12} | {vs_amplitude:.1f}%")
 
-    # 3. Convergence of best result
-    best_result = max(results, key=lambda x: x["solution_quality"])
-    if len(best_result["loss_history"]) > 1:
-        ax3.plot(best_result["loss_history"], 'b-', linewidth=2)
-        ax3.set_title(f"Best Convergence: {best_result['optimizer']} + {best_result['ansatz']}")
-        ax3.set_xlabel("Iterations")
-        ax3.set_ylabel("Loss")
-        ax3.set_yscale('log')
-        ax3.grid(True, alpha=0.3)
-    else:
-        ax3.text(0.5, 0.5, "No convergence history available", ha='center', va='center', transform=ax3.transAxes)
+        if data['reliability_score'] > best_hardware_score:
+            best_hardware_score = data['reliability_score']
+            best_hardware_ansatz = ansatz
 
-    # 4. Solution quality vs final loss scatter
-    qualities = [r["solution_quality"] for r in results]
-    losses = [r["final_loss"] for r in results]
-    colors = [hash(r["optimizer"]) % 10 for r in results]
+    # Final recommendation
+    print(f"\n💡 FINAL RECOMMENDATIONS:")
 
-    scatter = ax4.scatter(losses, qualities, c=colors, cmap='tab10', alpha=0.7, s=50)
-    ax4.set_xlabel("Final Loss")
-    ax4.set_ylabel("Solution Quality")
-    ax4.set_title("Solution Quality vs Final Loss")
-    ax4.set_xscale('log')
-    ax4.grid(True, alpha=0.3)
+    if best_hardware_ansatz:
+        best_data = all_hardware_results[best_hardware_ansatz]
+        best_stats = best_data['stats']
 
-    # Add legend for optimizers
-    unique_optimizers = list(set(r["optimizer"] for r in results))
-    legend_elements = [plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=plt.cm.tab10(hash(opt) % 10 / 10), markersize=8, label=opt) for opt
-                       in unique_optimizers]
-    ax4.legend(handles=legend_elements, title="Optimizers", bbox_to_anchor=(1.05, 1), loc='upper left')
+        print(f"\n🏆 BEST HARDWARE-REALISTIC ANSATZ:")
+        print(f"  Ansatz: {best_hardware_ansatz}")
+        print(f"  Optimizer: {best_data['optimizer']}")
+        print(f"  Learning Rate: {best_data['lr']}")
+        print(f"  Mean Quality: {best_stats['mean_quality']:.4f} ± {best_stats['std_quality']:.4f}")
+        print(f"  Success Rate (>60%): {best_stats['success_rate'] * 100:.1f}%")
+        print(f"  Reliability Score: {best_data['reliability_score']:.4f}")
 
-    plt.tight_layout()
-    plt.show()
+        # Performance vs amplitude
+        performance_ratio = best_stats['mean_quality'] / amplitude_stats['mean_quality']
+        print(f"  Performance vs Amplitude: {performance_ratio * 100:.1f}%")
 
-    return fig
-
-
-# Add this to the SINGLE_MODE section as an option
-OPTIMIZE_COMPLEX_Y = True  # Set to True to run complex Y optimization strategies
-
-
-def run_vpfs_refinement():
-    """Refinement mode for VPFS - find optimal parameters around the winning configuration."""
-
-    print("=" * 70)
-    print("🔬 VPFS REFINEMENT MODE: Optimizing Best Configuration")
-    print("=" * 70)
-
-    # Use the winning configuration as base: cobyla + complex_z
-    base_optimizer = "cobyla"  # Winner!
-    base_ansatz = "shallow_hardware"  # Winner!
-    base_lr = 0.05  # Winner!
-
-    print(f"🏆 Base configuration (WINNER): {base_optimizer} + {base_ansatz}")
-    print(f"   Base learning rate: {base_lr}, Base seed: {rng_seed}")
-
-    # Parameters to test for refinement - focused around winning config
-    refinement_configs = [  # Original winner for reference
-        (base_optimizer, base_ansatz, base_lr, "🏆 Baseline", 2, max_iters),
-
-    ]
-
-    best_quality = 0  # Beat the current winner
-    best_overall = None
-    all_refined_results = []
-
-    print(f"\n🧪 Testing {len(refinement_configs)} refinement configurations...")
-
-    for i, config in enumerate(refinement_configs, 1):
-        if len(config) == 6:
-            opt, ans, lr, desc, seed, max_iters_local = config
-            tol = tolerance
+        if performance_ratio > 0.8:
+            print(f"  ✅ EXCELLENT: Achieves >80% of amplitude performance!")
+        elif performance_ratio > 0.6:
+            print(f"  👍 GOOD: Achieves >60% of amplitude performance")
+        elif performance_ratio > 0.4:
+            print(f"  ⚠️  MODERATE: Achieves >40% of amplitude performance")
         else:
-            opt, ans, lr, desc, seed, max_iters_local, tol = config
+            print(f"  ❌ POOR: <40% of amplitude performance")
 
-        print(f"\n[{i:2d}/{len(refinement_configs)}] 🧪 {desc}")
-        print(f"     Config: {opt} + {ans} (lr={lr}, seed={seed}, iters={max_iters_local})")
+        # Reliability assessment
+        if best_stats['coefficient_of_variation'] < 0.2:
+            print(f"  ✅ RELIABLE: Low variability across seeds")
+        elif best_stats['coefficient_of_variation'] < 0.4:
+            print(f"  ⚠️  MODERATE RELIABILITY: Some variability")
+        else:
+            print(f"  ❌ UNRELIABLE: High variability - not suitable for production")
 
-        try:
-            # Temporarily adjust tolerance if specified
-            original_tolerance = globals()['tolerance']
-            if 'tol' in locals():
-                globals()['tolerance'] = tol
+        # Final verdict
+        if performance_ratio > 0.6 and best_stats['coefficient_of_variation'] < 0.3:
+            print(f"\n🎉 CONCLUSION: {best_hardware_ansatz} is VIABLE for hardware implementation!")
+        else:
+            print(f"\n⚠️  CONCLUSION: Hardware ansätze have significant limitations")
+            print(f"   Consider ensemble methods or hybrid approaches")
 
-            result = run_vpfs_optimization(ans, opt, seed, lr=lr, max_iterations=max_iters_local, verbose=False)
+        # Run best configuration one more time for detailed analysis
+        print(f"\n🔬 DETAILED ANALYSIS OF BEST CONFIGURATION:")
+        best_result = run_vpfs_optimization(best_hardware_ansatz, best_data['optimizer'], rng_seed, lr=best_data['lr'], max_iterations=2000,
+                                            verbose=True)
 
-            # Restore original tolerance
-            globals()['tolerance'] = original_tolerance
+        if best_result and best_result["V_solution"] is not None:
+            compare_vpfs_solutions(best_result)
 
-            # Calculate detailed metrics
-            metrics = calculate_solution_metrics(result)
-            result.update(metrics)
-            result['description'] = desc
-            result['config_details'] = f"lr={lr}, seed={seed}, max_iters={max_iters_local}"
+        return best_result, all_hardware_results
 
-            all_refined_results.append(result)
-
-            quality = result['solution_quality']
-            loss = result['final_loss']
-            error = result['max_error_V']
-
-            print(f"     📊 Quality: {quality:.6f}, Loss: {loss:.6e}, Max Error: {error:.6f}")
-
-            if quality > best_quality:
-                improvement = ((quality - best_quality) / best_quality) * 100
-                best_quality = quality
-                best_overall = result
-                print(f"     🌟 NEW BEST! (+{improvement:.1f}% improvement)")
-            elif quality > 0.8:
-                print(f"     ✅ Good result")
-            else:
-                print(f"     ⚠️  Below target")
-
-        except Exception as e:
-            print(f"     ❌ Error: {e}")
-
-    return best_overall, all_refined_results
-
-
-def save_vpfs_results(result, comparison_data, mode="single"):
-    """Save complete VPFS results including comparison."""
-
-    complete_results = {"timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "mode": mode,
-                        "optimization": {"optimizer": result["optimizer"], "ansatz": result["ansatz"], "seed": result["seed"],
-                                         "learning_rate": result["learning_rate"], "final_loss": result["final_loss"],
-                                         "solution_quality": result["solution_quality"], "max_error_V": result["max_error_V"],
-                                         "converged": result["converged"], "optimization_time": result["optimization_time"]},
-                        "comparison": comparison_data,
-                        "configuration": {"num_qubits": num_qubits, "max_iters": max_iters, "tolerance": tolerance, "Y_matrix": Y.tolist(),
-                                          "Y_matrix_type": "complex" if np.any(np.imag(Y) != 0) else "real", "V_target": V.tolist(),
-                                          "complex_Y_test": TEST_COMPLEX_Y}}
-
-    # Determine filename based on mode
-    if mode == "refinement":
-        filename = "vpfs_refinement_results.json"
     else:
-        filename = "vpfs_single_results.json"
+        print(f"❌ No hardware ansätze achieved acceptable performance")
+        return None, all_hardware_results
 
-    all_experiments = []
-    if os.path.exists(filename):
-        try:
-            with open(filename, "r") as f:
-                all_experiments = json.load(f)
-        except (json.JSONDecodeError, FileNotFoundError):
-            all_experiments = []
 
-    # Add new experiment
-    complete_results["experiment_id"] = len(all_experiments) + 1
-    all_experiments.append(complete_results)
+def run_turbo_comparison():
+    """High-speed parallel comparison of optimizers and ansätze."""
+    optimizer_list = ["adam", "nesterov", "rmsprop"]
+    ansatz_list = ["amplitude", "complex_z", "hardware_efficient"]
+    all_results = []
 
-    # Save all experiments
-    with open(filename, "w") as f:
-        json.dump(all_experiments, f, indent=2, default=str)
+    print("=" * 60)
+    print("🚀 TURBO MODE: HIGH-SPEED PARALLEL COMPARISON")
+    print("=" * 60)
 
-    print(f"\nComplete results saved to: {filename} (Experiment #{complete_results['experiment_id']})")
-    return filename
+    tasks = []
+    for optimizer_name in optimizer_list:
+        for ansatz_name in ansatz_list:
+            for seed in range(N_RANDOM_SEEDS):
+                tasks.append((ansatz_name, optimizer_name, seed, 0.1, 800, False))
+
+    global MODO_SILENCIOSO
+    MODO_SILENCIOSO = True
+
+    start_time = time.time()
+    with ProcessPoolExecutor(max_workers=mp.cpu_count()) as executor:
+        futures = [executor.submit(run_vpfs_optimization, *task) for task in tasks]
+        all_results = [f.result() for f in futures]
+    end_time = time.time()
+
+    MODO_SILENCIOSO = False
+    print(f"\nTurbo mode finished {len(tasks)} experiments in {end_time - start_time:.2f} seconds.")
+
+    # Process results to find best per config
+    processed_results = {}
+    for r in all_results:
+        key = (r['optimizer'], r['ansatz'])
+        if key not in processed_results or r['solution_quality'] > processed_results[key]['solution_quality']:
+            processed_results[key] = r
+
+    final_results = list(processed_results.values())
+    return final_results
 
 
 #
-# Main Execution
+# Main execution block
 #
+if __name__ == '__main__':
 
-if __name__ == "__main__":
-    print("=" * 70)
-    print("🔬 VPFS EXPERIMENTAL OPTIMIZATION SUITE")
-    print("=" * 70)
-
-    # Check which mode is active
-    active_modes = []
-    if MULTIPLE_RUNS:
-        active_modes.append("MULTIPLE_RUNS")
-    if SINGLE_MODE:
-        active_modes.append("SINGLE_MODE")
-    if REFINEMENT_MODE:
-        active_modes.append("REFINEMENT_MODE")
-    if TURBO_MODE:
-        active_modes.append("TURBO_MODE")
-
-    if len(active_modes) != 1:
-        print("❌ ERROR: Exactly one mode must be True!")
-        print("Current modes:", active_modes)
-        print("Please set only one of: MULTIPLE_RUNS, SINGLE_MODE, REFINEMENT_MODE, TURBO_MODE to True")
-        exit(1)
-
-    active_mode = active_modes[0]
-    print(f"🎯 Running in {active_mode}")
-    print("=" * 70)
+    # Suppress warnings in main execution for clarity
+    warnings.filterwarnings("ignore", category=UserWarning, message=".*Casting complex values to real.*")
 
     if MULTIPLE_RUNS:
-        # Systematic comparison
-        print("🔄 SYSTEMATIC COMPARISON MODE")
         results = run_systematic_comparison()
-
         if results:
-            best_result, filename = analyze_and_save_vpfs_results(results)
-            plot_vpfs_comparison_results(results)
+            print("Systematic comparison completed.")
 
-            print(f"\n🎉 Experiment completed!")
-            print(f"Best configuration: {best_result['optimizer']} + {best_result['ansatz']}")
-            print(f"Best solution quality: {best_result['solution_quality']:.6f}")
-        else:
-            print("No successful results obtained.")
+    if SINGLE_MODE:
+        print("\n" + "=" * 60)
+        print("🎯 SINGLE MODE: MULTI-SEED STATISTICAL ANALYSIS")
+        print("=" * 60)
 
-    elif SINGLE_MODE:
-        # Individual experiment
-        print("🎯 SINGLE EXPERIMENT MODE - WELL-CONDITIONED Y MATRIX TEST")
-        print("🚀 Goal: Achieve >99% solution quality with well-conditioned matrices")
+        # Test both amplitude (baseline) and hardware_efficient
+        test_configs = [("amplitude", "adam", "Baseline - NOT hardware realistic"), ("hardware_efficient", "adam", "Hardware-realistic ansatz"),
+            ("hardware_efficient", "cobyla", "Hardware-realistic with COBYLA")]
 
-        # Test both cases for comparison
-        test_cases = [(Y_real, "WELL-CONDITIONED REAL Y Matrix", "Regularized matrix (condition ~35)"),
-                      (Y_complex, "WELL-CONDITIONED COMPLEX Y Matrix", "Optimal matrix (condition ~3) + 5% complexity")]
+        for ansatz, optimizer, description in test_configs:
+            print(f"\n🧪 TESTING: {description}")
+            print("=" * 50)
 
-        best_results = []
+            results, stats = run_multiseed_analysis(ansatz, optimizer, num_seeds=N_RANDOM_SEEDS, lr=0.1, max_iterations=1500, verbose=True)
 
-        for i, (Y_matrix, case_name, description) in enumerate(test_cases, 1):
-            print(f"\n{'=' * 60}")
-            print(f"🔬 CASE {i}/2: {case_name}")
-            print(f"📋 Description: {description}")
-            print(f"📊 Y Matrix sample: Y[0,0] = {Y_matrix[0, 0]:.3f}, Y[1,0] = {Y_matrix[1, 0]:.3f}")
-            print(f"📊 Condition number: {np.linalg.cond(Y_matrix):.1f}")
-            print(f"{'=' * 60}")
+            if results and stats['mean_quality'] > 0.6:
+                # Show detailed analysis for best result
+                best_result = max(results, key=lambda x: x['solution_quality'])
+                compare_vpfs_solutions(best_result)
 
-            # Update global Y matrix for this test
-            globals()['Y'] = Y_matrix
+    if REFINEMENT_MODE:
+        best_result, all_hardware_results = run_vpfs_refinement()
 
-            try:
-                result = run_vpfs_optimization("shallow_hardware", "cobyla", rng_seed, lr=0.05, verbose=True)
-
-                quality = result['solution_quality']
-                loss = result['final_loss']
-                error = result['max_error_V']
-
-                print(f"\n📊 RESULTS for {case_name}:")
-                print(f"   Quality: {quality:.6f}")
-                print(f"   Loss: {loss:.6e}")
-                print(f"   Max Error: {error:.6f}")
-
-                # Store result with case info
-                result['case_name'] = case_name
-                result['Y_matrix_type'] = "complex" if np.any(np.imag(Y_matrix) != 0) else "real"
-                result['Y_matrix'] = Y_matrix.tolist()
-                best_results.append(result)
-
-                if quality > 0.99:
-                    print(f"   🎉 OUTSTANDING performance: >99% quality!")
-                elif quality > 0.95:
-                    print(f"   ✅ EXCELLENT performance: >95% quality!")
-                elif quality > 0.9:
-                    print(f"   ✅ VERY GOOD performance: >90% quality!")
-                else:
-                    print(f"   ⚠️  Below expected quality for well-conditioned matrix")
-
-            except Exception as e:
-                print(f"   ❌ Error with {case_name}: {e}")
-                continue
-
-        # Comparison results
-        if len(best_results) >= 2:
-            print(f"\n" + "=" * 60)
-            print("🚀 WELL-CONDITIONED MATRIX ANALYSIS")
-            print("=" * 60)
-
-            real_result = best_results[0]
-            complex_result = best_results[1]
-
-            print(f"\n📊 PERFORMANCE COMPARISON:")
-            print(f"   Well-Conditioned Real Y Matrix:")
-            print(f"     Quality: {real_result['solution_quality']:.6f}")
-            print(f"     Loss: {real_result['final_loss']:.6e}")
-            print(f"     Max Error: {real_result['max_error_V']:.6f}")
-
-            print(f"   Well-Conditioned Complex Y Matrix:")
-            print(f"     Quality: {complex_result['solution_quality']:.6f}")
-            print(f"     Loss: {complex_result['final_loss']:.6e}")
-            print(f"     Max Error: {complex_result['max_error_V']:.6f}")
-
-            # Calculate performance change
-            quality_change = ((complex_result['solution_quality'] - real_result['solution_quality']) / real_result['solution_quality']) * 100
-
-            print(f"\n🎯 IMPACT OF WELL-CONDITIONED COMPLEX Y MATRIX:")
-            if abs(quality_change) < 5:
-                print(f"   📊 MINIMAL IMPACT: {quality_change:+.1f}% quality change")
-                print(f"   ✅ Algorithm handles complex Y matrices excellently!")
-            elif quality_change > 0:
-                print(f"   📈 IMPROVEMENT: {quality_change:+.1f}% quality increase")
-                print(f"   🎉 Complex Y actually helps performance!")
-            else:
-                print(f"   📉 DEGRADATION: {quality_change:+.1f}% quality decrease")
-                print(f"   ⚠️  Complex Y makes problem slightly more challenging")
-
-            # Choose best result for final analysis
-            if complex_result['solution_quality'] >= real_result['solution_quality']:
-                result = complex_result
-                print(f"\n🏆 USING COMPLEX Y RESULT for final analysis")
-            else:
-                result = real_result
-                print(f"\n🏆 USING REAL Y RESULT for final analysis")
-
-            # 🎉 CELEBRATION FOR HIGH QUALITY
-            max_quality = max(real_result['solution_quality'], complex_result['solution_quality'])
-            if max_quality > 0.999:
-                print(f"\n🎉🎉🎉 PHENOMENAL RESULTS! 🎉🎉🎉")
-                print(f"   Quality >99.9% achieved!")
-                print(f"   This is outstanding for quantum optimization!")
-            elif max_quality > 0.99:
-                print(f"\n🎉 EXCELLENT RESULTS! 🎉")
-                print(f"   Quality >99% achieved!")
-                print(f"   Well-conditioned matrices work perfectly!")
-
-        else:
-            print("\n❌ Could not complete comparison")
-            result = best_results[0] if best_results else None
-
-        # Show convergence
-        if result and len(result["loss_history"]) > 1:
-            plt.figure(figsize=(10, 6))
-            plt.plot(result["loss_history"], "g", linewidth=2)
-            plt.ylabel("Loss Function")
-            plt.xlabel("Optimization steps")
-            plt.title(f"VPFS Optimization: {result['optimizer']} + {result['ansatz']} (Quality: {result['solution_quality']:.6f})")
-            plt.yscale('log')
-            plt.grid(True, alpha=0.3)
-            plt.show()
-
-        if result:
-            print(f"Final loss: {result['final_loss']:.6e}")
-            print(f"Solution quality: {result['solution_quality']:.6f}")
-
-            # Compare solutions
-            comparison_data = compare_vpfs_solutions(result)
-
-            # Save complete results
-            filename = save_vpfs_results(result, comparison_data, mode="single")
-
-            print(f"\n🎉 Single experiment completed successfully!")
-            print(f"Solution quality: {result['solution_quality']:.6f}")
-            print(f"Max error in V: {result['max_error_V']:.6f}")
-            print(f"Results saved to: {filename}")
-
-    elif REFINEMENT_MODE:
-        # Refinement mode
-        print("🔬 REFINEMENT MODE")
-        print("This mode will systematically refine the best known configuration for VPFS")
-        print()
-
-        best_refined, refined_results = run_vpfs_refinement()
-
-        if best_refined:
-            print(f"\n🏆 BEST REFINED SOLUTION:")
-            print(f"  Configuration: {best_refined['description']}")
-            print(f"  Details: {best_refined['config_details']}")
-            print(f"  Solution Quality: {best_refined['solution_quality']:.6f}")
-            print(f"  Max Error in V: {best_refined['max_error_V']:.6f}")
-            print(f"  Final Loss: {best_refined['final_loss']:.6e}")
-
-            # Detailed analysis of best refined solution
-            print(f"\n🔬 DETAILED ANALYSIS OF BEST REFINED SOLUTION:")
-            comparison_data = compare_vpfs_solutions(best_refined)
-
-            # Save refined results
-            filename = save_vpfs_results(best_refined, comparison_data, mode="refinement")
-
-            print(f"\n🎉 REFINEMENT COMPLETED SUCCESSFULLY!")
-            print(f"📈 Best configuration found: {best_refined['description']}")
-            print(f"📊 Final solution quality: {best_refined['solution_quality']:.6f}")
-            print(f"💾 Detailed results saved to: {filename}")
-        else:
-            print("❌ No refined solutions found")
-
-    elif TURBO_MODE:
-        # High-speed parallel experiments
-        print("🚀 TURBO MODE - High-Speed Parallel Experiments")
-
-        # Configure for speed
-        MODO_SILENCIOSO = True
-
-        # Quick parameter sweep (including VQLS winners + advanced ansätze)
-        optimizers_to_test = ["nesterov", "cobyla", "adam", "rmsprop"]
-        ansatzes_to_test = ["complex_z", "deep_layered", "eigenvalue_specific", "expressiv_hybrid"]
-        learning_rates = [0.03, 0.05, 0.07]
-
-        all_configs = []
-        for opt in optimizers_to_test:
-            for ans in ansatzes_to_test:
-                for lr in learning_rates:
-                    for seed in [1, 2, 3]:
-                        all_configs.append((ans, opt, seed, lr, 500))  # Reduced iterations for speed
-
-        print(f"🚀 Testing {len(all_configs)} configurations in parallel...")
-
-
-        # Use multiprocessing for parallel execution
-        def run_single_config(config):
-            ansatz_name, optimizer_name, seed, lr, max_iters_local = config
-            try:
-                return run_vpfs_optimization(ansatz_name, optimizer_name, seed, lr=lr, max_iterations=max_iters_local, verbose=False)
-            except Exception as e:
-                print(f"Error with config {config}: {e}")
-                return None
-
-
-        start_time = time.time()
-
-        # Sequential execution (can be made parallel with ProcessPoolExecutor)
-        results = []
-        for i, config in enumerate(all_configs):
-            print(f"Progress: {i + 1}/{len(all_configs)}", end='\r')
-            result = run_single_config(config)
-            if result:
-                results.append(result)
-
-        total_time = time.time() - start_time
-
-        print(f"\n🎉 Turbo mode completed in {total_time:.1f}s!")
-        print(f"Successfully completed {len(results)}/{len(all_configs)} experiments")
-
-        if results:
-            best_turbo = max(results, key=lambda x: x["solution_quality"])
-            print(f"🏆 Best turbo result: {best_turbo['optimizer']} + {best_turbo['ansatz']}")
-            print(f"   Quality: {best_turbo['solution_quality']:.6f}")
-            print(f"   Loss: {best_turbo['final_loss']:.6e}")
+    if TURBO_MODE:
+        results = run_turbo_comparison()
+        print(f"Turbo comparison completed with {len(results)} configurations.")
 
     print(f"\n" + "=" * 70)
-    print("🏁 VPFS EXPERIMENTAL SUITE EXECUTION COMPLETED")
+    print("🏁 VPFS HARDWARE-REALISTIC ANALYSIS COMPLETED")
     print("=" * 70)
+    print("✅ Multi-seed robustness analysis performed")
+    print("✅ Hardware ansätze statistical performance evaluated")
+    print("✅ Realistic expectations for NISQ hardware established")
