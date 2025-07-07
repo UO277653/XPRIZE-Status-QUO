@@ -1,325 +1,258 @@
 import os
 
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
-
+import numpy as np
 import pennylane as qml
-from pennylane import numpy as np
 from scipy.linalg import sqrtm, polar
 from scipy.optimize import minimize
 import torch
 import matplotlib.pyplot as plt
-import json
-from datetime import datetime
-import multiprocessing as mp
-from concurrent.futures import ProcessPoolExecutor
 import time
 import warnings
 
-# Suppress complex casting warnings for cleaner output
 warnings.filterwarnings("ignore", message="Casting complex values to real discards the imaginary part")
 
-#
-# Setting of the main hyper-parameters of the model
-#
+# Setup problem with complex V
+print("🧪 VPFS CONVERGENCE IMPROVEMENT EXPERIMENT")
+print("=" * 60)
 
-# VPFS Problem parameters with COMPLEX V support
-print("🚀 USING WELL-CONDITIONED Y MATRICES WITH COMPLEX V VECTORS")
-
-# Opción 1: Matriz regularizada
-Y_real = np.array([[1, -1, 0, 0], [-1, 2, -1, 0], [0, -1, 2, -1], [0, 0, -1, 1]], dtype=complex)
-regularization = 0.1  # Añadir regularización para mejorar condicionamiento
-Y_real = Y_real + regularization * np.eye(4)  # Condition number ~35 (BUENO)
-
-# Opción 2: Matriz óptima (matemáticamente bien condicionada)
-eigenvals = [4.0, 3.0, 2.0, 1.5]  # Eigenvalues bien separados
-Q = np.array([  # Matriz ortogonal
-    [0.5, 0.5, 0.5, 0.5], [0.5, -0.5, 0.5, -0.5], [0.5, 0.5, -0.5, -0.5], [0.5, -0.5, -0.5, 0.5]])
+# Problem setup (same as before)
+eigenvals = [4.0, 3.0, 2.0, 1.5]
+Q = np.array([[0.5, 0.5, 0.5, 0.5], [0.5, -0.5, 0.5, -0.5], [0.5, 0.5, -0.5, -0.5], [0.5, -0.5, -0.5, 0.5]])
 D = np.diag(eigenvals)
-Y_complex = (Q @ D @ Q.T).astype(complex)  # Condition number ~2.67 (EXCELENTE)
+Y = (Q @ D @ Q.T).astype(complex) + 1j * (Q @ D @ Q.T) * 0.05
 
-# Añadir pequeña parte imaginaria para versión compleja
-Y_complex = Y_complex + 1j * Y_complex * 0.05  # 5% de complejidad
+V_real_part = np.array([1.0, 1.1, 0.95, 0.9])
+V_imag_part = np.array([0.0, 0.1, -0.05, 0.08])
+V = V_real_part + 1j * V_imag_part
 
-print(f"📊 Y_real condition number: {np.linalg.cond(Y_real):.1f}")
-print(f"📊 Y_complex condition number: {np.linalg.cond(Y_complex):.1f}")
-
-# 🎯 TESTING BOTH CASES
-TEST_COMPLEX_Y = True  # Set to True to test complex Y matrix
-TEST_COMPLEX_V = True  # 🆕 NEW: Set to True to test complex V vector
-
-if TEST_COMPLEX_Y:
-    Y = Y_complex
-    print("🔬 USING WELL-CONDITIONED COMPLEX Y MATRIX - General electrical networks")
-else:
-    Y = Y_real
-    print("🔬 USING WELL-CONDITIONED REAL Y MATRIX - Urban/rural networks")
-
-# 🆕 COMPLEX V VECTOR SUPPORT
-if TEST_COMPLEX_V:
-    # Complex voltage reference - more realistic for electrical power systems
-    V_real_part = np.array([1.0, 1.1, 0.95, 0.9])  # Voltage magnitudes
-    V_imag_part = np.array([0.0, 0.1, -0.05, 0.08])  # Phase components
-    V = V_real_part + 1j * V_imag_part
-    print("🔬 USING COMPLEX V VECTOR - Realistic power system voltages with phase")
-    print(f"   V = {V}")
-    print(f"   |V| = {np.abs(V)}")
-    print(f"   ∠V = {np.angle(V) * 180 / np.pi} degrees")
-else:
-    V = np.array([1, 1.1, 0.95, 0.9], dtype=complex)  # Keep as complex array for consistency
-    print("🔬 USING REAL V VECTOR (stored as complex) - Simplified case")
-    print(f"   V = {V}")
-
-num_qubits = 2  # Number of qubits per register
+num_qubits = 2
 total_wires = 2 * num_qubits + 1
+tolerance = 1e-9
 
-# Optimization parameters
-max_iters = 2000
-tolerance = 1e-9  # Convergence tolerance
-learning_rate = 0.4
-radius = 0.1  # Parameter for amplitude ansatz
-PEN_COEF_SCALE = 0.0  # Penalty coefficient scale
-loss_option = 4
+print(f"Target V: {V}")
+print(f"Y condition number: {np.linalg.cond(Y):.1f}")
 
-# Experimental configuration
-rng_seed = 2
-N_RANDOM_SEEDS = 5  # Increased for better statistics
-
-# --------------------------------------------------------------------------
-# EXECUTION MODES
-MULTIPLE_RUNS = False  # For systematic comparison
-SINGLE_MODE = False  # For individual experiment with multiple seeds
-REFINEMENT_MODE = True  # For refining best configuration with robustness analysis
-TURBO_MODE = False  # For high-speed parallel experiments
-# --------------------------------------------------------------------------
-
-# Speed optimization
-USAR_OPTIMIZACION_RAPIDA = True  # Use fast optimizations when possible
-
-global MODO_SILENCIOSO
-MODO_SILENCIOSO = False  # Silent mode for batch experiments
-
-
-#
-# VPFS Algorithm Core Functions with Complex V Support
-#
 
 def create_unitaries(Y, B):
-    """Creates the unitary matrices Y_extended and U_b† (calculated from B) - supports complex B."""
-    # Normalization and Y_extended calculation
+    """Creates the unitary matrices Y_extended and U_b†."""
     Y_norm = np.max(np.abs(np.linalg.eigvals(Y)))
     Y_normalized = Y / Y_norm
-    sqrt_diff = sqrtm(np.eye(len(Y)) - Y_normalized @ np.conj(Y_normalized.T))  # 🆕 Use conjugate transpose
+    sqrt_diff = sqrtm(np.eye(len(Y)) - Y_normalized @ np.conj(Y_normalized.T))
     Y_extended = np.block([[Y_normalized, sqrt_diff], [sqrt_diff, -Y_normalized]])
-    Y_extended, _ = polar(Y_extended)  # Take unitary part
+    Y_extended, _ = polar(Y_extended)
 
-    # Build U_b† based on complex B using Gram-Schmidt
     b = B / np.linalg.norm(B)
     U_b = np.eye(len(b), dtype=complex)
     U_b[:, 0] = b
 
-    # 🆕 Modified Gram-Schmidt for complex vectors
     for i in range(1, len(b) - 1):
         v_vec = U_b[1:, i]
         for j in range(i):
-            v_vec -= np.vdot(U_b[1:, j], v_vec) * U_b[1:, j]  # Use vdot for complex inner product
+            v_vec -= np.vdot(U_b[1:, j], v_vec) * U_b[1:, j]
         norm = np.linalg.norm(v_vec)
-        if norm > 1e-10:  # Avoid division by zero
+        if norm > 1e-10:
             v_vec = v_vec / norm
             U_b[1:, i] = v_vec
 
     U_b[0, -1] = 1
     U_b[-1, -1] = 0
-    U_b_dagger = np.conj(U_b.T)  # 🆕 Proper conjugate transpose
+    U_b_dagger = np.conj(U_b.T)
 
     return Y_extended, U_b_dagger, Y_norm
 
 
-#
-# Enhanced Ansatz Functions for Complex V
-#
+# VPFS setup
+B = V * (Y @ V)
+B[0] = 0
+B_norm = np.linalg.norm(B)
+Y_extended, U_b_dagger, Y_norm = create_unitaries(Y, B)
 
-def ansatz_amplitude(params):
-    """Calculates vector v from parameter vector params (amplitude embedding) - supports complex output."""
-    v = [1]  # First component fixed
-    for i in range(len(params)):
-        if radius > 0:
-            # 🆕 Support complex amplitudes with phase information
-            magnitude = np.sin(params[i]) * radius + 1
-            if i < len(params) // 2:  # First half for magnitudes
-                v.append(magnitude)
-            else:  # Second half for phases (if available)
-                phase_idx = i - len(params) // 2
-                if phase_idx < len(v) - 1:
-                    v[phase_idx + 1] *= np.exp(1j * params[i])
-        else:
-            v.append(params[i] + 1)
-
-    v = np.array(v, dtype=complex)
-    v = v / np.linalg.norm(v)
-    return v
+dev = qml.device("default.qubit", wires=total_wires)
+dev_v = qml.device("default.qubit", wires=num_qubits)
 
 
-def ansatz_variational_block(weights, n_qubits):
-    """Ansatz with entanglement and exactly 2^n - 1 parameters - enhanced for complex states."""
-    num_params = len(weights)
-    assert num_params == 2 ** n_qubits - 1, f"Expected {2 ** n_qubits - 1} parameters, got {num_params}."
+# ========================================
+# ENHANCED ANSÄTZE FOR COMPLEX STATES
+# ========================================
 
-    # 1. Initialize in uniform superposition with Hadamard
-    for idx in range(n_qubits):
-        qml.Hadamard(wires=idx)
+def ansatz_complex_enhanced(params, wires):
+    """Enhanced complex ansatz with better parameterization."""
+    n_qubits = len(wires)
+    # More parameters for better expressivity: 3 per qubit
+    expected_params = 3 * n_qubits
+    assert len(params) == expected_params, f"Expected {expected_params} params, got {len(params)}"
 
-    # 2. Apply RY rotations with first n_qubits parameters
-    for idx in range(n_qubits):
-        qml.RY(weights[idx], wires=idx)
-
-    # 3. Apply entanglement (CNOT in linear topology)
-    for idx in range(n_qubits - 1):
-        qml.CNOT(wires=[idx, idx + 1])
-
-    # 4. 🆕 Apply additional rotations including RZ for complex phases
-    extra_params = weights[n_qubits:]
-    for idx, param in enumerate(extra_params):
-        if idx % 2 == 0:
-            qml.RY(param, wires=idx % n_qubits)
-        else:
-            qml.RZ(param, wires=idx % n_qubits)  # Add phase rotations
-
-
-def ansatz_complex_z(params, wires):
-    """Complex ansatz using RZ rotations - optimized for complex V."""
-    n_qubits_reg = len(wires)
-    expected_params = 2 * n_qubits_reg
-    assert len(params) == expected_params, f"Expected {expected_params} params for {n_qubits_reg} qubits, got {len(params)}"
-
-    for wire in wires:  # Initial state preparation
+    # Layer 1: Hadamard initialization
+    for wire in wires:
         qml.Hadamard(wires=wire)
 
-    param_idx = 0
-    for wire in wires:  # First RZ layer
-        qml.RZ(params[param_idx], wires=wire)
-        param_idx += 1
+    # Layer 2: First rotation layer (RY, RZ)
+    for i, wire in enumerate(wires):
+        qml.RY(params[i], wires=wire)
+        qml.RZ(params[i + n_qubits], wires=wire)
 
-    for i in range(n_qubits_reg - 1):  # Entanglement
+    # Layer 3: Entanglement
+    for i in range(n_qubits - 1):
         qml.CNOT(wires=[wires[i], wires[i + 1]])
 
-    for wire in wires:  # Second RZ layer
-        qml.RZ(params[param_idx], wires=wire)
-        param_idx += 1
+    # Layer 4: Final rotation layer for fine-tuning
+    for i, wire in enumerate(wires):
+        qml.RY(params[i + 2 * n_qubits], wires=wire)
 
 
-def ansatz_hardware_efficient(params, wires):
-    """
-    A standard hardware-efficient ansatz with layered rotations and entanglement.
-    🆕 Enhanced for complex states with RZ gates for phase control.
-    """
+def ansatz_dual_layer(params, wires):
+    """Dual-layer ansatz with alternating rotations and entanglement."""
     n_qubits = len(wires)
-    params_per_layer = 2 * n_qubits  # 🆕 Double params: RY + RZ per qubit
+    params_per_layer = 2 * n_qubits
+    total_params = 2 * params_per_layer  # 2 layers
+    assert len(params) == total_params, f"Expected {total_params} params, got {len(params)}"
 
-    for l in range(n_layers):
-        # Rotation layer - both magnitude (RY) and phase (RZ)
-        for i in range(n_qubits):
-            qml.RY(params[l * params_per_layer + 2 * i], wires=wires[i])  # Magnitude
-            qml.RZ(params[l * params_per_layer + 2 * i + 1], wires=wires[i])  # Phase
+    # Initial superposition
+    for wire in wires:
+        qml.Hadamard(wires=wire)
 
-        # Entanglement layer (linear chain)
-        for i in range(n_qubits - 1):
-            qml.CNOT(wires=[wires[i], wires[i + 1]])
+    # Layer 1
+    for i, wire in enumerate(wires):
+        qml.RY(params[2 * i], wires=wire)
+        qml.RZ(params[2 * i + 1], wires=wire)
 
+    # Entanglement 1
+    for i in range(n_qubits - 1):
+        qml.CNOT(wires=[wires[i], wires[i + 1]])
 
-def ansatz_strongly_entangling(params, wires):
-    """A strongly entangling layered ansatz from PennyLane templates."""
-    qml.StronglyEntanglingLayers(weights=params, wires=wires)
+    # Layer 2
+    for i, wire in enumerate(wires):
+        qml.RY(params[params_per_layer + 2 * i], wires=wire)
+        qml.RZ(params[params_per_layer + 2 * i + 1], wires=wire)
 
-
-# Dictionary of available ansätze - UPDATED for complex V
-n_layers = 2  # For standard layered ansatz
-
-ansatzes = {  # Original VPFS ansätze - enhanced
-    "amplitude": {"n_params": lambda: 2 ** num_qubits - 1, "description": "Amplitude embedding ansatz (enhanced for complex)"},
-    "variational_block": {"n_params": lambda: 2 ** num_qubits - 1, "description": "Variational block with RY+RZ rotations"},
-    "complex_z": {"n_params": lambda: 2 * num_qubits, "description": "Complex ansatz with RZ rotations (optimal for complex V)"},
-
-    # Hardware-realistic ansätze - enhanced for complex states
-    "hardware_efficient": {"n_params": lambda: n_layers * 2 * num_qubits, "description": "Enhanced hardware-efficient (RY+RZ per layer)"},
-    "strongly_entangling": {"n_params": lambda: qml.StronglyEntanglingLayers.shape(n_layers=n_layers, n_wires=num_qubits)[0] *
-                                                qml.StronglyEntanglingLayers.shape(n_layers=n_layers, n_wires=num_qubits)[1] *
-                                                qml.StronglyEntanglingLayers.shape(n_layers=n_layers, n_wires=num_qubits)[2],
-                            "description": "Strongly Entangling Layers ansatz"}}
-
-# Dictionary of available optimizers (unchanged)
-optimizers_vpfs = {"basic": "Basic finite difference gradient descent", "analytic": "Analytic gradient with PennyLane autodiff",
-                   "sequential": "Sequential parameter optimization", "cobyla": "COBYLA constrained optimization",
-                   "adam": "Adam optimizer with PyTorch", "nesterov": "Nesterov Momentum Optimizer", "rmsprop": "RMSProp Optimizer",
-                   "adagrad": "Adagrad Optimizer", "momentum": "Momentum Optimizer", "sgd": "Stochastic Gradient Descent", "spsa": "SPSA Optimizer"}
-
-# PennyLane optimizers (unchanged)
-pennylane_optimizers = {"nesterov": lambda lr: qml.NesterovMomentumOptimizer(stepsize=lr), "rmsprop": lambda lr: qml.RMSPropOptimizer(stepsize=lr),
-                        "adagrad": lambda lr: qml.AdagradOptimizer(stepsize=lr), "momentum": lambda lr: qml.MomentumOptimizer(stepsize=lr),
-                        "sgd": lambda lr: qml.GradientDescentOptimizer(stepsize=lr),
-                        "spsa": lambda lr: qml.SPSAOptimizer(maxiter=max_iters, blocking=False)}
+    # Entanglement 2 (circular)
+    for i in range(n_qubits - 1):
+        qml.CNOT(wires=[wires[i], wires[i + 1]])
+    if n_qubits > 2:
+        qml.CNOT(wires=[wires[-1], wires[0]])
 
 
-#
-# Enhanced VPFS Quantum Optimization Core for Complex V
-#
+def ansatz_universal_su4(params, wires):
+    """Universal SU(4) ansatz for 2-qubit case - maximum expressivity."""
+    assert len(wires) == 2, "This ansatz is specifically for 2 qubits"
+    expected_params = 15  # SU(4) requires 15 parameters
+    assert len(params) == expected_params, f"Expected {expected_params} params, got {len(params)}"
 
-def run_vpfs_optimization(ansatz_name, optimizer_name, seed, lr=None, max_iterations=None, verbose=True):
-    """
-    🆕 Enhanced VPFS optimization with full complex V support.
-    """
-    global learning_rate, max_iters
+    # Universal 2-qubit gate decomposition
+    # Layer 1: Single qubit rotations
+    qml.RZ(params[0], wires=wires[0])
+    qml.RY(params[1], wires=wires[0])
+    qml.RZ(params[2], wires=wires[0])
 
-    # Set parameters
-    if lr is not None:
-        learning_rate = lr
-    if max_iterations is not None:
-        max_iters = max_iterations
+    qml.RZ(params[3], wires=wires[1])
+    qml.RY(params[4], wires=wires[1])
+    qml.RZ(params[5], wires=wires[1])
 
-    # Set random seed
+    # Layer 2: Entangling gate
+    qml.CNOT(wires=[wires[0], wires[1]])
+
+    # Layer 3: Single qubit rotations
+    qml.RZ(params[6], wires=wires[0])
+    qml.RY(params[7], wires=wires[0])
+    qml.RZ(params[8], wires=wires[0])
+
+    qml.RZ(params[9], wires=wires[1])
+    qml.RY(params[10], wires=wires[1])
+    qml.RZ(params[11], wires=wires[1])
+
+    # Layer 4: Second entangling gate
+    qml.CNOT(wires=[wires[0], wires[1]])
+
+    # Layer 5: Final single qubit rotations
+    qml.RZ(params[12], wires=wires[0])
+    qml.RY(params[13], wires=wires[0])
+    qml.RZ(params[14], wires=wires[1])
+
+
+# ========================================
+# IMPROVED INITIALIZATION STRATEGIES
+# ========================================
+
+def smart_initialization(n_params, strategy="complex_aware"):
+    """Smart parameter initialization strategies."""
+    if strategy == "complex_aware":
+        # Initialize with smaller random values to avoid large phases
+        return np.random.uniform(-np.pi / 4, np.pi / 4, size=n_params)
+    elif strategy == "zeros":
+        return np.zeros(n_params)
+    elif strategy == "identity_bias":
+        # Bias towards identity-like transformations
+        return np.random.normal(0, 0.1, size=n_params)
+    else:
+        return np.random.uniform(0, 2 * np.pi, size=n_params)
+
+
+# ========================================
+# ADAPTIVE LEARNING RATE OPTIMIZERS
+# ========================================
+
+class AdaptiveLearningRate:
+    """Adaptive learning rate with convergence detection."""
+
+    def __init__(self, initial_lr=0.1, patience=50, factor=0.8, min_lr=1e-5):
+        self.initial_lr = initial_lr
+        self.current_lr = initial_lr
+        self.patience = patience
+        self.factor = factor
+        self.min_lr = min_lr
+        self.best_loss = float('inf')
+        self.wait = 0
+
+    def update(self, loss):
+        if loss < self.best_loss:
+            self.best_loss = loss
+            self.wait = 0
+        else:
+            self.wait += 1
+
+        if self.wait >= self.patience:
+            self.current_lr = max(self.current_lr * self.factor, self.min_lr)
+            self.wait = 0
+            return True  # Learning rate was reduced
+        return False
+
+
+def finite_difference_gradient(loss_fn, params, delta=1e-5):
+    """Improved finite difference gradient with adaptive delta."""
+    grad = np.zeros_like(params, dtype=float)
+    for i in range(len(params)):
+        params_plus = params.copy()
+        params_minus = params.copy()
+        params_plus[i] += delta
+        params_minus[i] -= delta
+        loss_plus = loss_fn(params_plus)
+        loss_minus = loss_fn(params_minus)
+        grad[i] = (loss_plus - loss_minus) / (2 * delta)
+    return grad
+
+
+# ========================================
+# EXPERIMENT RUNNER
+# ========================================
+
+def run_single_experiment(ansatz_name, ansatz_fn, n_params, optimizer_name, init_strategy, lr, max_iters, seed, verbose=False):
+    """Run a single optimization experiment."""
     np.random.seed(seed)
     torch.manual_seed(seed)
 
-    if verbose and not MODO_SILENCIOSO:
-        print(f"\n--- Running VPFS: {optimizer_name} + {ansatz_name} (seed={seed}, lr={learning_rate}) ---")
-        if TEST_COMPLEX_V:
-            print(
-                f"    🆕 Using COMPLEX V: |V|_max = {np.max(np.abs(V)):.3f}, phase_range = [{np.min(np.angle(V) * 180 / np.pi):.1f}°, {np.max(np.angle(V) * 180 / np.pi):.1f}°]")
+    # Initialize parameters
+    initial_params = smart_initialization(n_params, init_strategy)
 
-    # Initialize parameters based on ansatz
-    n_params = ansatzes[ansatz_name]["n_params"]()
-    initial_params = np.random.uniform(0, 2 * np.pi, size=n_params)
-
-    # 🆕 VPFS setup with complex V support
-    B = V * (Y @ V)  # Now fully supports complex operations
-    B[0] = 0
-    B_norm = np.linalg.norm(B)
-    Y_extended, U_b_dagger, Y_norm = create_unitaries(Y, B)
-
-    dev = qml.device("default.qubit", wires=total_wires)
-    dev_v = qml.device("default.qubit", wires=num_qubits)
-
-    # QNode for getting vector 'v' in unified way
+    # Setup QNodes
     @qml.qnode(dev_v)
-    def get_v_qnode(params, option_ansatz):
-        if option_ansatz == 'amplitude':
-            v_temp = ansatz_amplitude(params)
-            qml.AmplitudeEmbedding(v_temp, wires=range(num_qubits), normalize=False)
-        elif option_ansatz == 'complex_z':
-            ansatz_complex_z(params, range(num_qubits))
-        elif option_ansatz == 'variational_block':
-            ansatz_variational_block(params, num_qubits)
-        elif option_ansatz == 'hardware_efficient':
-            ansatz_hardware_efficient(params, range(num_qubits))
-        elif option_ansatz == 'strongly_entangling':
-            shape = qml.StronglyEntanglingLayers.shape(n_layers=n_layers, n_wires=num_qubits)
-            ansatz_strongly_entangling(params.reshape(shape), wires=range(num_qubits))
-
+    def get_v_qnode(params):
+        ansatz_fn(params, range(num_qubits))
         return qml.state()
 
-    # Main quantum circuits (unchanged structure, but now supports complex operations)
     @qml.qnode(dev)
-    def circuit1(params, option_ansatz):
-        state_v = get_v_qnode(params, option_ansatz)
+    def circuit1(params):
+        state_v = get_v_qnode(params)
         qml.StatePrep(state_v, wires=range(1, num_qubits + 1))
         qml.StatePrep(state_v, wires=range(num_qubits + 1, 2 * num_qubits + 1))
         qml.QubitUnitary(Y_extended, wires=range(num_qubits + 1))
@@ -328,8 +261,8 @@ def run_vpfs_optimization(ansatz_name, optimizer_name, seed, lr=None, max_iterat
         return qml.state()
 
     @qml.qnode(dev)
-    def circuit2(params, option_ansatz):
-        state_v = get_v_qnode(params, option_ansatz)
+    def circuit2(params):
+        state_v = get_v_qnode(params)
         qml.StatePrep(state_v, wires=range(1, num_qubits + 1))
         qml.StatePrep(state_v, wires=range(num_qubits + 1, 2 * num_qubits + 1))
         qml.QubitUnitary(Y_extended, wires=range(num_qubits + 1))
@@ -338,21 +271,18 @@ def run_vpfs_optimization(ansatz_name, optimizer_name, seed, lr=None, max_iterat
         qml.QubitUnitary(U_b_dagger, wires=range(num_qubits + 1, 2 * num_qubits + 1))
         return qml.state()
 
-    def calculate_loss_with_simulation(params):
-        """🆕 Enhanced VPFS loss function with full complex support."""
+    def calculate_loss(params):
         try:
-            # Ensure params are real for gradient calculations
             params_real = np.real(params) if np.iscomplexobj(params) else params
-
-            v = get_v_qnode(params_real, ansatz_name)
+            v = get_v_qnode(params_real)
 
             if abs(v[0]) < 1e-9:
-                return 1e6  # Avoid division by zero
+                return 1e6
             V_norm = abs(1 / v[0])
 
             dim = 2 ** num_qubits
-            statevector1 = circuit1(params_real, ansatz_name)
-            statevector2 = circuit2(params_real, ansatz_name)
+            statevector1 = circuit1(params_real)
+            statevector2 = circuit2(params_real)
 
             shots_array = np.abs(statevector1[1:dim]) ** 2
             shots_total = np.sum(shots_array)
@@ -364,437 +294,367 @@ def run_vpfs_optimization(ansatz_name, optimizer_name, seed, lr=None, max_iterat
             norm_after_ub = np.sqrt(shots_array2)
 
             norm_YV_cnot = norm_yv_cnot * Y_norm * V_norm * V_norm
-            pen_coef = PEN_COEF_SCALE / B_norm ** 2
-
             a2 = norm_YV_cnot ** 2
             b2 = B_norm ** 2
             ab = norm_after_ub * Y_norm * B_norm * V_norm * V_norm
             loss = a2 + b2 - 2 * ab
 
-            # Ensure loss is real
             selected_loss = float(np.real(loss))
-
-            if np.isnan(selected_loss) or np.isinf(selected_loss):
+            if np.isnan(selected_loss) or np.isinf(selected_loss) or selected_loss < -1e6:
                 return 1e6
-
-            if selected_loss < -1e6:
-                return 1e6
-
             return max(selected_loss, 0)
 
-        except Exception as e:
-            if verbose:
-                print(f"Error in loss calculation: {e}")
+        except Exception:
             return 1e6
 
-    def finite_difference_gradient(params, delta=1e-4):
-        grad = np.zeros_like(params, dtype=float)
-        for i in range(len(params)):
-            params_plus = params.copy()
-            params_minus = params.copy()
-            params_plus[i] += delta
-            params_minus[i] -= delta
-            loss_plus = calculate_loss_with_simulation(params_plus)
-            loss_minus = calculate_loss_with_simulation(params_minus)
-            grad[i] = (loss_plus - loss_minus) / (2 * delta)
-        return grad
-
-    # Get analytic gradient function with PennyLane
-    grad_fn = qml.grad(calculate_loss_with_simulation)
-
-    # Optimization loop (unchanged - same structure as before)
+    # Run optimization
     current_params = initial_params.copy()
     loss_history = []
     start_time = time.time()
 
-    # [Same optimization code as before - works with complex V through the loss function]
-    if optimizer_name in ["nesterov", "rmsprop", "adagrad", "momentum", "sgd", "spsa"]:
-        # PennyLane optimizers
-        if optimizer_name == "spsa":
-            opt = pennylane_optimizers[optimizer_name](learning_rate)
-        else:
-            opt = pennylane_optimizers[optimizer_name](learning_rate)
-
-        current_params = np.real(current_params.astype(np.float64))
-
-        for iter_count in range(max_iters):
-            loss = calculate_loss_with_simulation(current_params)
-            loss_history.append(float(loss))
-
-            if loss is None or np.isnan(loss):
-                if verbose:
-                    print(f"Iteration {iter_count + 1}: Invalid loss encountered. Stopping.")
-                break
-            if loss < tolerance:
-                if verbose:
-                    print(f"Iteration {iter_count + 1}: Converged using {optimizer_name}.")
-                break
-
-            try:
-                if optimizer_name == "spsa":
-                    current_params = opt.step(calculate_loss_with_simulation, current_params)
-                    current_params = np.real(current_params.astype(np.float64))
-                else:
-                    current_params, loss = opt.step_and_cost(calculate_loss_with_simulation, current_params)
-                    current_params = np.real(current_params.astype(np.float64))
-
-            except Exception as e:
-                if verbose:
-                    print(f"Iteration {iter_count + 1}: Error during optimization step: {e}")
-                break
-
-            if verbose and not MODO_SILENCIOSO and (iter_count % 200 == 0 or iter_count <= 5):
-                print(f"  Step {iter_count:3d}: Loss = {loss:.8e}")
-
-    elif optimizer_name == "analytic":
-        for iter_count in range(max_iters):
-            loss = calculate_loss_with_simulation(current_params)
-            loss_history.append(float(loss))
-
-            if loss is None or np.isnan(loss):
-                if verbose:
-                    print(f"Iteration {iter_count + 1}: Invalid loss encountered. Stopping.")
-                break
-            if loss < tolerance:
-                if verbose:
-                    print(f"Iteration {iter_count + 1}: Converged using analytic gradient.")
-                break
-
-            try:
-                grad = grad_fn(current_params)
-                if np.any(np.isnan(grad)):
-                    if verbose:
-                        print(f"Iteration {iter_count + 1}: NaN gradient encountered. Stopping.")
-                    break
-                current_params = current_params - learning_rate * grad
-            except Exception as e:
-                if verbose:
-                    print(f"Iteration {iter_count + 1}: Error during gradient calculation: {e}")
-                break
-
-            if verbose and not MODO_SILENCIOSO and (iter_count % 100 == 0 or iter_count <= 5):
-                print(f"  Step {iter_count:3d}: Loss = {loss:.8e}")
-
-    elif optimizer_name == "basic":
-        for iter_count in range(max_iters):
-            loss = calculate_loss_with_simulation(current_params)
-            loss_history.append(float(loss))
-
-            if loss is None or np.isnan(loss):
-                break
-            if loss < tolerance:
-                if verbose:
-                    print(f"Iteration {iter_count + 1}: Converged using basic finite difference.")
-                break
-
-            grad = finite_difference_gradient(current_params)
-            if np.any(np.isnan(grad)):
-                break
-            current_params = current_params - learning_rate * grad
-
-            if verbose and not MODO_SILENCIOSO and (iter_count % 100 == 0 or iter_count <= 5):
-                print(f"  Step {iter_count:3d}: Loss = {loss:.8e}")
-
-    elif optimizer_name == "cobyla":
-        def loss_func_cobyla(params):
-            l = calculate_loss_with_simulation(params)
-            return float(l) if l is not None and not np.isnan(l) else 1e6
-
-        result = minimize(loss_func_cobyla, current_params, tol=tolerance, method="COBYLA", options={"maxiter": max_iters, "disp": False})
-        current_params = result.x
-        iter_count = result.nfev
-        loss = result.fun
-        loss_history = [loss]
-
-        if verbose:
-            print(f"COBYLA finished after {result.nfev} evaluations. Final loss: {result.fun:.6e}")
-
-    elif optimizer_name == "adam":
+    if optimizer_name == "adaptive_adam":
+        # Custom adaptive Adam with learning rate scheduling
+        adaptive_lr = AdaptiveLearningRate(lr, patience=100, factor=0.7)
         params_tensor = torch.tensor(current_params.astype(np.float32), requires_grad=True)
-        optim = torch.optim.Adam([params_tensor], lr=learning_rate)
+        optim = torch.optim.Adam([params_tensor], lr=adaptive_lr.current_lr)
 
         for iter_count in range(max_iters):
-            loss_val = calculate_loss_with_simulation(params_tensor.detach().numpy())
+            loss_val = calculate_loss(params_tensor.detach().numpy())
             loss_history.append(float(loss_val))
 
-            if loss_val is None or np.isnan(loss_val):
-                break
             if loss_val < tolerance:
-                if verbose:
-                    print(f"Iteration {iter_count + 1}: Converged using Adam.")
                 break
 
+            # Update learning rate
+            if adaptive_lr.update(loss_val):
+                for param_group in optim.param_groups:
+                    param_group['lr'] = adaptive_lr.current_lr
+                if verbose:
+                    print(f"    LR reduced to {adaptive_lr.current_lr:.6f} at iteration {iter_count}")
+
             optim.zero_grad()
-            grad_np = finite_difference_gradient(params_tensor.detach().numpy())
+            grad_np = finite_difference_gradient(calculate_loss, params_tensor.detach().numpy())
             if np.any(np.isnan(grad_np)):
                 break
 
             with torch.no_grad():
                 params_tensor.grad = torch.tensor(grad_np.astype(np.float32))
-
             optim.step()
 
-            if verbose and not MODO_SILENCIOSO and (iter_count % 100 == 0 or iter_count <= 5):
-                print(f"  Step {iter_count:3d}: Loss = {loss_val:.8e}")
+            if verbose and iter_count % 200 == 0:
+                print(f"    Step {iter_count:4d}: Loss = {loss_val:.6e}, LR = {adaptive_lr.current_lr:.6f}")
 
         current_params = params_tensor.detach().numpy()
-        loss = calculate_loss_with_simulation(current_params)
 
-    else:
-        raise ValueError(f"Optimizer '{optimizer_name}' not recognized.")
+    elif optimizer_name == "lbfgs":
+        # L-BFGS-B optimizer
+        def loss_func_scipy(params):
+            return calculate_loss(params)
 
-    # Calculate final metrics - 🆕 Enhanced for complex V
+        result = minimize(loss_func_scipy, current_params, method='L-BFGS-B', options={'maxiter': max_iters, 'disp': False})
+        current_params = result.x
+        loss_history = [result.fun]
+
+    else:  # Default Adam
+        params_tensor = torch.tensor(current_params.astype(np.float32), requires_grad=True)
+        optim = torch.optim.Adam([params_tensor], lr=lr)
+
+        for iter_count in range(max_iters):
+            loss_val = calculate_loss(params_tensor.detach().numpy())
+            loss_history.append(float(loss_val))
+
+            if loss_val < tolerance:
+                break
+
+            optim.zero_grad()
+            grad_np = finite_difference_gradient(calculate_loss, params_tensor.detach().numpy())
+            if np.any(np.isnan(grad_np)):
+                break
+
+            with torch.no_grad():
+                params_tensor.grad = torch.tensor(grad_np.astype(np.float32))
+            optim.step()
+
+        current_params = params_tensor.detach().numpy()
+
+    # Calculate final metrics
     final_loss = loss_history[-1] if loss_history else 1e6
-    optimization_time = time.time() - start_time
-
-    # Get final vector v and calculate solution quality
-    v_final = get_v_qnode(current_params, ansatz_name)
+    v_final = get_v_qnode(current_params)
 
     if abs(v_final[0]) < 1e-9:
-        Vsol = [np.nan] * len(V)
-        max_err_V = np.inf
         solution_quality = 0.0
+        magnitude_error = np.inf
         phase_error = np.inf
     else:
         v0 = v_final[0]
         Vsol = v_final / v0
 
-        # 🆕 Enhanced error calculation for complex V
-        err_V = np.abs(V - Vsol)  # Magnitude error
-        max_err_V = np.max(err_V)
+        magnitude_errors = np.abs(np.abs(V) - np.abs(Vsol))
+        phase_V = np.angle(V)
+        phase_Vsol = np.angle(Vsol)
+        phase_diff = np.abs(phase_V - phase_Vsol)
+        phase_diff = np.where(phase_diff > np.pi, 2 * np.pi - phase_diff, phase_diff)
 
-        # 🆕 Phase error calculation (only for complex case)
-        if TEST_COMPLEX_V:
-            phase_V = np.angle(V)
-            phase_Vsol = np.angle(Vsol)
-            phase_diff = np.abs(phase_V - phase_Vsol)
-            # Handle phase wrapping (difference should be < π)
-            phase_diff = np.where(phase_diff > np.pi, 2 * np.pi - phase_diff, phase_diff)
-            phase_error = np.max(phase_diff)
+        magnitude_error = np.max(magnitude_errors)
+        phase_error = np.max(phase_diff)
 
-            # Combined quality metric for complex case
-            magnitude_quality = 1.0 / (1.0 + max_err_V)
-            phase_quality = 1.0 / (1.0 + phase_error)
-            solution_quality = 0.7 * magnitude_quality + 0.3 * phase_quality  # Weight magnitude more
-        else:
-            phase_error = 0.0
-            solution_quality = 1.0 / (1.0 + max_err_V)
+        magnitude_quality = 1.0 / (1.0 + magnitude_error)
+        phase_quality = 1.0 / (1.0 + phase_error)
+        solution_quality = 0.7 * magnitude_quality + 0.3 * phase_quality
 
-    if verbose and not MODO_SILENCIOSO:
-        print(f"  Final loss: {final_loss:.7e}")
-        print(f"  Max magnitude error: {max_err_V:.6f}")
-        if TEST_COMPLEX_V:
-            print(f"  Max phase error: {phase_error:.6f} rad ({phase_error * 180 / np.pi:.1f}°)")
-        print(f"  Solution quality: {solution_quality:.6f}")
+    optimization_time = time.time() - start_time
 
-    # 🆕 Enhanced return dictionary with complex support
-    result_dict = {"optimizer": optimizer_name, "ansatz": ansatz_name, "seed": seed, "learning_rate": learning_rate, "max_iterations": max_iters,
-                   "final_loss": final_loss, "loss_history": loss_history, "final_params": current_params.tolist(), "n_params": len(current_params),
-                   "optimization_time": optimization_time, "converged_at": len(loss_history), "solution_quality": solution_quality,
-                   "max_error_V": max_err_V, "V_target": V.tolist(), "converged": final_loss < tolerance, "complex_V_used": TEST_COMPLEX_V}
-
-    # Add complex-specific metrics
-    if TEST_COMPLEX_V:
-        result_dict["phase_error"] = phase_error
-        result_dict["V_target_magnitude"] = np.abs(V).tolist()
-        result_dict["V_target_phase"] = np.angle(V).tolist()
-
-    # Handle complex solution serialization
-    if not np.any(np.isnan(Vsol)):
-        if TEST_COMPLEX_V:
-            result_dict["V_solution"] = Vsol.tolist()
-            result_dict["V_solution_magnitude"] = np.abs(Vsol).tolist()
-            result_dict["V_solution_phase"] = np.angle(Vsol).tolist()
-        else:
-            result_dict["V_solution"] = np.real(Vsol).tolist()  # Real part only for real case
-    else:
-        result_dict["V_solution"] = None
-
-    return result_dict
+    return {'ansatz': ansatz_name, 'optimizer': optimizer_name, 'init_strategy': init_strategy, 'learning_rate': lr, 'seed': seed,
+            'final_loss': final_loss, 'solution_quality': solution_quality, 'magnitude_error': magnitude_error, 'phase_error': phase_error,
+            'phase_error_degrees': phase_error * 180 / np.pi, 'optimization_time': optimization_time, 'converged': final_loss < tolerance,
+            'iterations': len(loss_history), 'loss_history': loss_history[:min(len(loss_history), 100)]  # Store first 100 for plotting
+            }
 
 
-def compare_vpfs_solutions_complex(result):
-    """🆕 Enhanced solution comparison with complex V support."""
-    print("\n" + "=" * 50)
-    print("VPFS COMPLEX SOLUTION COMPARISON")
+# ========================================
+# MAIN EXPERIMENT
+# ========================================
+
+def run_convergence_experiment():
+    """Run comprehensive convergence improvement experiment."""
+
+    print("\n🔬 SYSTEMATIC CONVERGENCE EXPERIMENT")
     print("=" * 50)
 
-    if result["V_solution"] is None:
-        print("❌ Solution failed to converge properly")
-        return {"comparison_successful": False}
+    # Define experimental configurations
+    ansatzes = {'complex_enhanced': (ansatz_complex_enhanced, 3 * num_qubits), 'dual_layer': (ansatz_dual_layer, 4 * num_qubits)}
 
-    V_target = np.array(result["V_target"], dtype=complex)
-    V_solution = np.array(result["V_solution"], dtype=complex)
+    optimizers = ['adaptive_adam', 'lbfgs', 'adam']
+    init_strategies = ['complex_aware', 'identity_bias']
+    learning_rates = [0.01, 0.05, 0.1]
+    seeds = [0, 1, 2]
 
-    print("Target vector V:")
-    for i, val in enumerate(V_target):
-        if result["complex_V_used"]:
-            print(f"  V[{i}]: {val:.6f} = {np.abs(val):.6f}∠{np.angle(val) * 180 / np.pi:.1f}°")
-        else:
-            print(f"  V[{i}]: {np.real(val):.6f}")
+    results = []
+    total_experiments = len(ansatzes) * len(optimizers) * len(init_strategies) * len(learning_rates) * len(seeds)
+    experiment_count = 0
 
-    print("\nOptimized vector V:")
-    for i, val in enumerate(V_solution):
-        if result["complex_V_used"]:
-            print(f"  V[{i}]: {val:.6f} = {np.abs(val):.6f}∠{np.angle(val) * 180 / np.pi:.1f}°")
-        else:
-            print(f"  V[{i}]: {np.real(val):.6f}")
+    print(f"Running {total_experiments} experiments...")
+    print("This may take several minutes...\n")
 
-    # Calculate errors
-    magnitude_errors = np.abs(np.abs(V_target) - np.abs(V_solution))
+    best_result = None
+    best_quality = 0.0
 
-    print("\nMagnitude errors:")
-    for i, err in enumerate(magnitude_errors):
-        print(f"  ||V[{i}]| - |V_opt[{i}]||: {err:.6f}")
+    for ansatz_name, (ansatz_fn, n_params) in ansatzes.items():
+        for optimizer in optimizers:
+            for init_strategy in init_strategies:
+                for lr in learning_rates:
 
-    if result["complex_V_used"]:
-        phase_target = np.angle(V_target)
-        phase_solution = np.angle(V_solution)
-        phase_errors = np.abs(phase_target - phase_solution)
-        # Handle phase wrapping
-        phase_errors = np.where(phase_errors > np.pi, 2 * np.pi - phase_errors, phase_errors)
+                    # Run multiple seeds for this configuration
+                    config_results = []
+                    for seed in seeds:
+                        experiment_count += 1
 
-        print("\nPhase errors:")
-        for i, err in enumerate(phase_errors):
-            print(f"  |∠V[{i}] - ∠V_opt[{i}]|: {err:.6f} rad ({err * 180 / np.pi:.1f}°)")
+                        if experiment_count % 20 == 0:
+                            print(f"Progress: {experiment_count}/{total_experiments} ({100 * experiment_count / total_experiments:.1f}%)")
 
-    max_magnitude_error = np.max(magnitude_errors)
-    relative_error = np.linalg.norm(V_target - V_solution) / np.linalg.norm(V_target)
+                        try:
+                            result = run_single_experiment(ansatz_name, ansatz_fn, n_params, optimizer, init_strategy, lr, 1000, seed, verbose=False)
+                            config_results.append(result)
+                            results.append(result)
 
-    print(f"\nMaximum magnitude error: {max_magnitude_error:.6f}")
-    if result["complex_V_used"]:
-        max_phase_error = np.max(phase_errors)
-        print(f"Maximum phase error: {max_phase_error:.6f} rad ({max_phase_error * 180 / np.pi:.1f}°)")
-    print(f"Relative error (L2 norm): {relative_error:.6f}")
-    print(f"Solution quality: {result['solution_quality']:.6f}")
+                            # Track best result
+                            if result['solution_quality'] > best_quality:
+                                best_quality = result['solution_quality']
+                                best_result = result
 
-    # Enhanced visualization for complex case
-    if result["complex_V_used"]:
-        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 10))
+                        except Exception as e:
+                            print(f"Error in experiment {experiment_count}: {e}")
+                            continue
 
-        # Magnitude comparison
-        x_pos = np.arange(len(V_target))
-        width = 0.35
+                    # Print summary for this configuration
+                    if config_results:
+                        qualities = [r['solution_quality'] for r in config_results]
+                        mean_quality = np.mean(qualities)
+                        std_quality = np.std(qualities)
+                        print(f"{ansatz_name:15} | {optimizer:15} | {init_strategy:12} | lr={lr:4.2f} | "
+                              f"Quality: {mean_quality:.3f}±{std_quality:.3f}")
 
-        ax1.bar(x_pos - width / 2, np.abs(V_target), width, label='Target |V|', color='blue', alpha=0.7)
-        ax1.bar(x_pos + width / 2, np.abs(V_solution), width, label='Optimized |V|', color='green', alpha=0.7)
-        ax1.set_xlabel('Component Index')
-        ax1.set_ylabel('Magnitude')
-        ax1.set_title('Magnitude Comparison')
-        ax1.set_xticks(x_pos)
-        ax1.set_xticklabels([f'V[{i}]' for i in range(len(V_target))])
-        ax1.legend()
-        ax1.grid(True, alpha=0.3)
+    return results, best_result
 
-        # Phase comparison
-        ax2.bar(x_pos - width / 2, np.angle(V_target) * 180 / np.pi, width, label='Target ∠V', color='blue', alpha=0.7)
-        ax2.bar(x_pos + width / 2, np.angle(V_solution) * 180 / np.pi, width, label='Optimized ∠V', color='green', alpha=0.7)
-        ax2.set_xlabel('Component Index')
-        ax2.set_ylabel('Phase [degrees]')
-        ax2.set_title('Phase Comparison')
-        ax2.set_xticks(x_pos)
-        ax2.set_xticklabels([f'V[{i}]' for i in range(len(V_target))])
-        ax2.legend()
-        ax2.grid(True, alpha=0.3)
 
-        # Magnitude errors
-        ax3.bar(x_pos, magnitude_errors, color='red', alpha=0.7)
-        ax3.set_xlabel('Component Index')
-        ax3.set_ylabel('Magnitude Error')
-        ax3.set_title('Magnitude Errors')
-        ax3.set_xticks(x_pos)
-        ax3.set_xticklabels([f'V[{i}]' for i in range(len(V_target))])
-        ax3.grid(True, alpha=0.3)
+# ========================================
+# ANALYSIS AND VISUALIZATION
+# ========================================
 
-        # Phase errors
-        ax4.bar(x_pos, phase_errors * 180 / np.pi, color='orange', alpha=0.7)
-        ax4.set_xlabel('Component Index')
-        ax4.set_ylabel('Phase Error [degrees]')
-        ax4.set_title('Phase Errors')
-        ax4.set_xticks(x_pos)
-        ax4.set_xticklabels([f'V[{i}]' for i in range(len(V_target))])
-        ax4.grid(True, alpha=0.3)
+def analyze_results(results, best_result):
+    """Analyze and visualize experimental results."""
 
+    print(f"\n" + "=" * 60)
+    print("🏆 EXPERIMENT RESULTS ANALYSIS")
+    print("=" * 60)
+
+    if not results:
+        print("❌ No successful results to analyze")
+        return
+
+    # Overall statistics
+    qualities = [r['solution_quality'] for r in results if r['solution_quality'] > 0]
+    converged = [r for r in results if r['converged']]
+
+    print(f"\n📊 OVERALL STATISTICS:")
+    print(f"  Total experiments: {len(results)}")
+    print(f"  Successful runs: {len(qualities)}")
+    print(f"  Converged runs: {len(converged)}")
+    print(f"  Success rate: {100 * len(qualities) / len(results):.1f}%")
+    print(f"  Convergence rate: {100 * len(converged) / len(results):.1f}%")
+
+    if qualities:
+        print(f"  Mean quality: {np.mean(qualities):.4f} ± {np.std(qualities):.4f}")
+        print(f"  Best quality: {np.max(qualities):.4f}")
+        print(f"  Quality > 0.8: {100 * sum(1 for q in qualities if q > 0.8) / len(qualities):.1f}%")
+        print(f"  Quality > 0.9: {100 * sum(1 for q in qualities if q > 0.9) / len(qualities):.1f}%")
+
+    # Best result details
+    if best_result:
+        print(f"\n🥇 BEST CONFIGURATION:")
+        print(f"  Ansatz: {best_result['ansatz']}")
+        print(f"  Optimizer: {best_result['optimizer']}")
+        print(f"  Initialization: {best_result['init_strategy']}")
+        print(f"  Learning rate: {best_result['learning_rate']}")
+        print(f"  Final loss: {best_result['final_loss']:.2e}")
+        print(f"  Solution quality: {best_result['solution_quality']:.6f}")
+        print(f"  Magnitude error: {best_result['magnitude_error']:.6f}")
+        print(f"  Phase error: {best_result['phase_error_degrees']:.1f}°")
+        print(f"  Converged: {'✅' if best_result['converged'] else '❌'}")
+        print(f"  Time: {best_result['optimization_time']:.2f}s")
+
+    # Analysis by category
+    categories = ['ansatz', 'optimizer', 'init_strategy']
+
+    for category in categories:
+        print(f"\n📈 ANALYSIS BY {category.upper()}:")
+        category_stats = {}
+        for result in results:
+            key = result[category]
+            if key not in category_stats:
+                category_stats[key] = []
+            if result['solution_quality'] > 0:
+                category_stats[key].append(result['solution_quality'])
+
+        # Sort by mean quality
+        sorted_stats = sorted(category_stats.items(), key=lambda x: np.mean(x[1]) if x[1] else 0, reverse=True)
+
+        for name, qualities in sorted_stats:
+            if qualities:
+                mean_q = np.mean(qualities)
+                std_q = np.std(qualities)
+                print(f"  {name:20}: {mean_q:.4f} ± {std_q:.4f} ({len(qualities)} runs)")
+
+    # Visualization
+    if best_result and best_result['loss_history']:
+        plt.figure(figsize=(15, 10))
+
+        # Loss history
+        plt.subplot(2, 3, 1)
+        plt.semilogy(best_result['loss_history'])
+        plt.title(f"Best Loss History\n{best_result['ansatz']} + {best_result['optimizer']}")
+        plt.xlabel('Iteration')
+        plt.ylabel('Loss')
+        plt.grid(True, alpha=0.3)
+
+        # Quality distribution
+        plt.subplot(2, 3, 2)
+        plt.hist(qualities, bins=20, alpha=0.7, edgecolor='black')
+        plt.axvline(np.mean(qualities), color='red', linestyle='--', label=f'Mean: {np.mean(qualities):.3f}')
+        plt.axvline(best_result['solution_quality'], color='green', linestyle='-', linewidth=2, label=f'Best: {best_result["solution_quality"]:.3f}')
+        plt.xlabel('Solution Quality')
+        plt.ylabel('Frequency')
+        plt.title('Quality Distribution')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+
+        # Quality by ansatz
+        plt.subplot(2, 3, 3)
+        ansatz_qualities = {}
+        for result in results:
+            ansatz = result['ansatz']
+            if ansatz not in ansatz_qualities:
+                ansatz_qualities[ansatz] = []
+            if result['solution_quality'] > 0:
+                ansatz_qualities[ansatz].append(result['solution_quality'])
+
+        ansatzes = list(ansatz_qualities.keys())
+        means = [np.mean(ansatz_qualities[a]) if ansatz_qualities[a] else 0 for a in ansatzes]
+        stds = [np.std(ansatz_qualities[a]) if ansatz_qualities[a] else 0 for a in ansatzes]
+
+        plt.bar(ansatzes, means, yerr=stds, capsize=5, alpha=0.7)
+        plt.title('Quality by Ansatz')
+        plt.ylabel('Mean Quality')
+        plt.xticks(rotation=45)
+        plt.grid(True, alpha=0.3)
+
+        # Quality by optimizer
+        plt.subplot(2, 3, 4)
+        optimizer_qualities = {}
+        for result in results:
+            opt = result['optimizer']
+            if opt not in optimizer_qualities:
+                optimizer_qualities[opt] = []
+            if result['solution_quality'] > 0:
+                optimizer_qualities[opt].append(result['solution_quality'])
+
+        optimizers = list(optimizer_qualities.keys())
+        means = [np.mean(optimizer_qualities[o]) if optimizer_qualities[o] else 0 for o in optimizers]
+        stds = [np.std(optimizer_qualities[o]) if optimizer_qualities[o] else 0 for o in optimizers]
+
+        plt.bar(optimizers, means, yerr=stds, capsize=5, alpha=0.7, color='orange')
+        plt.title('Quality by Optimizer')
+        plt.ylabel('Mean Quality')
+        plt.xticks(rotation=45)
+        plt.grid(True, alpha=0.3)
+
+        # Phase error vs magnitude error
+        plt.subplot(2, 3, 5)
+        mag_errors = [r['magnitude_error'] for r in results if r['magnitude_error'] < 10]
+        phase_errors = [r['phase_error_degrees'] for r in results if r['phase_error_degrees'] < 180]
+
+        plt.scatter(mag_errors, phase_errors, alpha=0.6)
+        plt.xlabel('Magnitude Error')
+        plt.ylabel('Phase Error (degrees)')
+        plt.title('Error Correlation')
+        plt.grid(True, alpha=0.3)
+
+        # Learning rate analysis
+        plt.subplot(2, 3, 6)
+        lr_qualities = {}
+        for result in results:
+            lr = result['learning_rate']
+            if lr not in lr_qualities:
+                lr_qualities[lr] = []
+            if result['solution_quality'] > 0:
+                lr_qualities[lr].append(result['solution_quality'])
+
+        lrs = sorted(lr_qualities.keys())
+        means = [np.mean(lr_qualities[lr]) if lr_qualities[lr] else 0 for lr in lrs]
+        stds = [np.std(lr_qualities[lr]) if lr_qualities[lr] else 0 for lr in lrs]
+
+        plt.bar([str(lr) for lr in lrs], means, yerr=stds, capsize=5, alpha=0.7, color='green')
+        plt.title('Quality by Learning Rate')
+        plt.ylabel('Mean Quality')
+        plt.xlabel('Learning Rate')
+        plt.grid(True, alpha=0.3)
+
+        plt.tight_layout()
+        plt.show()
+
+    return best_result
+
+
+# Run the experiment
+if __name__ == "__main__":
+    results, best_result = run_convergence_experiment()
+    analyze_results(results, best_result)
+
+    if best_result and best_result['solution_quality'] > 0.8:
+        print(f"\n🎉 SUCCESS! Found configuration with quality > 0.8")
+        print(f"   Use: {best_result['ansatz']} + {best_result['optimizer']} + {best_result['init_strategy']}")
+        print(f"   Learning rate: {best_result['learning_rate']}")
     else:
-        # Simple comparison for real case
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
-
-        x_pos = np.arange(len(V_target))
-        width = 0.35
-
-        ax1.bar(x_pos - width / 2, np.real(V_target), width, label='Target V', color='blue', alpha=0.7)
-        ax1.bar(x_pos + width / 2, np.real(V_solution), width, label='Optimized V', color='green', alpha=0.7)
-        ax1.set_xlabel('Component Index')
-        ax1.set_ylabel('Value')
-        ax1.set_title('Target vs Optimized Solution')
-        ax1.set_xticks(x_pos)
-        ax1.set_xticklabels([f'V[{i}]' for i in range(len(V_target))])
-        ax1.legend()
-        ax1.grid(True, alpha=0.3)
-
-        # Error plot
-        errors = np.abs(V_target - V_solution)
-        ax2.bar(x_pos, errors, color='red', alpha=0.7)
-        ax2.set_xlabel('Component Index')
-        ax2.set_ylabel('Absolute Error')
-        ax2.set_title('Component-wise Errors')
-        ax2.set_xticks(x_pos)
-        ax2.set_xticklabels([f'V[{i}]' for i in range(len(V_target))])
-        ax2.grid(True, alpha=0.3)
-
-    plt.tight_layout()
-    plt.show()
-
-    return {"comparison_successful": True, "max_magnitude_error": float(max_magnitude_error),
-            "max_phase_error": float(max_phase_error) if result["complex_V_used"] else 0.0, "relative_error": float(relative_error),
-            "V_target": V_target.tolist(), "V_solution": V_solution.tolist(), "magnitude_errors": magnitude_errors.tolist(),
-            "phase_errors": phase_errors.tolist() if result["complex_V_used"] else []}
-
-
-#
-# Main execution block with Complex V testing
-#
-if __name__ == '__main__':
-
-    # Suppress warnings in main execution for clarity
-    warnings.filterwarnings("ignore", category=UserWarning, message=".*Casting complex values to real.*")
-
-    print("\n" + "=" * 70)
-    print("🎯 VPFS WITH COMPLEX V VECTOR - DEMONSTRATION")
-    print("=" * 70)
-
-    # Test configuration optimized for complex V
-    best_ansatz = "complex_z"  # This ansatz is designed for complex states
-    best_optimizer = "adam"
-
-    print(f"\n🧪 TESTING: {best_ansatz} + {best_optimizer} with {'COMPLEX' if TEST_COMPLEX_V else 'REAL'} V")
-    print("=" * 50)
-
-    # Run single optimization with detailed output
-    result = run_vpfs_optimization(ansatz_name=best_ansatz, optimizer_name=best_optimizer, seed=rng_seed, lr=0.1, max_iterations=1500, verbose=True)
-
-    if result and result["V_solution"] is not None:
-        print(f"\n🎉 Optimization completed successfully!")
-        print(f"   Final loss: {result['final_loss']:.2e}")
-        print(f"   Solution quality: {result['solution_quality']:.4f}")
-        if TEST_COMPLEX_V:
-            print(f"   Max magnitude error: {result['max_error_V']:.6f}")
-            print(f"   Max phase error: {result['phase_error']:.6f} rad ({result['phase_error'] * 180 / np.pi:.1f}°)")
-
-        # Show detailed comparison
-        compare_vpfs_solutions_complex(result)
-
-    else:
-        print(f"❌ Optimization failed to converge")
-
-    print(f"\n" + "=" * 70)
-    print("🏁 VPFS COMPLEX V ANALYSIS COMPLETED")
-    print("=" * 70)
-    if TEST_COMPLEX_V:
-        print("✅ Complex voltage vector V successfully handled")
-        print("✅ Phase and magnitude errors calculated")
-        print("✅ Enhanced visualization for complex case")
-        print("💡 This demonstrates VPFS capability for realistic power system problems!")
-    else:
-        print("✅ Real voltage vector V processed (stored as complex for consistency)")
-        print("💡 Set TEST_COMPLEX_V = True to test full complex functionality")
+        print(f"\n⚠️  No configuration achieved quality > 0.8")
+        print(f"   Best achieved: {best_result['solution_quality']:.4f}" if best_result else "No successful runs")
+        print(f"   Consider: longer training, different ansätze, or problem reformulation")
