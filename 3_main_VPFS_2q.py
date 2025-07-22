@@ -482,7 +482,7 @@ def run_convergence_experiment():
 # ========================================
 
 def analyze_results(results, best_result):
-    """Analyze and visualize experimental results."""
+    """Analyze and visualize experimental results - FIXED VERSION."""
 
     print(f"\n" + "=" * 60)
     print("🏆 EXPERIMENT RESULTS ANALYSIS")
@@ -539,13 +539,13 @@ def analyze_results(results, best_result):
         # Sort by mean quality
         sorted_stats = sorted(category_stats.items(), key=lambda x: np.mean(x[1]) if x[1] else 0, reverse=True)
 
-        for name, qualities in sorted_stats:
-            if qualities:
-                mean_q = np.mean(qualities)
-                std_q = np.std(qualities)
-                print(f"  {name:20}: {mean_q:.4f} ± {std_q:.4f} ({len(qualities)} runs)")
+        for name, qualities_cat in sorted_stats:
+            if qualities_cat:
+                mean_q = np.mean(qualities_cat)
+                std_q = np.std(qualities_cat)
+                print(f"  {name:20}: {mean_q:.4f} ± {std_q:.4f} ({len(qualities_cat)} runs)")
 
-    # Visualization
+    # Visualization - FIXED VERSION
     if best_result and best_result['loss_history']:
         plt.figure(figsize=(15, 10))
 
@@ -578,11 +578,11 @@ def analyze_results(results, best_result):
             if result['solution_quality'] > 0:
                 ansatz_qualities[ansatz].append(result['solution_quality'])
 
-        ansatzes = list(ansatz_qualities.keys())
-        means = [np.mean(ansatz_qualities[a]) if ansatz_qualities[a] else 0 for a in ansatzes]
-        stds = [np.std(ansatz_qualities[a]) if ansatz_qualities[a] else 0 for a in ansatzes]
+        ansatzes_list = list(ansatz_qualities.keys())
+        means = [np.mean(ansatz_qualities[a]) if ansatz_qualities[a] else 0 for a in ansatzes_list]
+        stds = [np.std(ansatz_qualities[a]) if ansatz_qualities[a] else 0 for a in ansatzes_list]
 
-        plt.bar(ansatzes, means, yerr=stds, capsize=5, alpha=0.7)
+        plt.bar(ansatzes_list, means, yerr=stds, capsize=5, alpha=0.7)
         plt.title('Quality by Ansatz')
         plt.ylabel('Mean Quality')
         plt.xticks(rotation=45)
@@ -598,26 +598,34 @@ def analyze_results(results, best_result):
             if result['solution_quality'] > 0:
                 optimizer_qualities[opt].append(result['solution_quality'])
 
-        optimizers = list(optimizer_qualities.keys())
-        means = [np.mean(optimizer_qualities[o]) if optimizer_qualities[o] else 0 for o in optimizers]
-        stds = [np.std(optimizer_qualities[o]) if optimizer_qualities[o] else 0 for o in optimizers]
+        optimizers_list = list(optimizer_qualities.keys())
+        means = [np.mean(optimizer_qualities[o]) if optimizer_qualities[o] else 0 for o in optimizers_list]
+        stds = [np.std(optimizer_qualities[o]) if optimizer_qualities[o] else 0 for o in optimizers_list]
 
-        plt.bar(optimizers, means, yerr=stds, capsize=5, alpha=0.7, color='orange')
+        plt.bar(optimizers_list, means, yerr=stds, capsize=5, alpha=0.7, color='orange')
         plt.title('Quality by Optimizer')
         plt.ylabel('Mean Quality')
         plt.xticks(rotation=45)
         plt.grid(True, alpha=0.3)
 
-        # Phase error vs magnitude error
+        # FIXED: Phase error vs magnitude error - Filter results together
         plt.subplot(2, 3, 5)
-        mag_errors = [r['magnitude_error'] for r in results if r['magnitude_error'] < 10]
-        phase_errors = [r['phase_error_degrees'] for r in results if r['phase_error_degrees'] < 180]
+        # Filter results that have both reasonable magnitude and phase errors
+        valid_results = [r for r in results if (r['magnitude_error'] < 10 and r['phase_error_degrees'] < 180 and r['solution_quality'] > 0)]
 
-        plt.scatter(mag_errors, phase_errors, alpha=0.6)
-        plt.xlabel('Magnitude Error')
-        plt.ylabel('Phase Error (degrees)')
-        plt.title('Error Correlation')
-        plt.grid(True, alpha=0.3)
+        if valid_results:  # Only plot if we have valid results
+            mag_errors = [r['magnitude_error'] for r in valid_results]
+            phase_errors = [r['phase_error_degrees'] for r in valid_results]
+
+            plt.scatter(mag_errors, phase_errors, alpha=0.6)
+            plt.xlabel('Magnitude Error')
+            plt.ylabel('Phase Error (degrees)')
+            plt.title('Error Correlation')
+            plt.grid(True, alpha=0.3)
+        else:
+            plt.text(0.5, 0.5, 'No valid data\nfor correlation plot', horizontalalignment='center', verticalalignment='center',
+                     transform=plt.gca().transAxes, fontsize=12)
+            plt.title('Error Correlation')
 
         # Learning rate analysis
         plt.subplot(2, 3, 6)
